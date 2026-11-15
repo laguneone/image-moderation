@@ -6,6 +6,7 @@
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint",
+    "test": "pnpm --filter @moderation/api test",
     "db:generate": "pnpm --filter @moderation/database generate",
     "db:migrate": "pnpm --filter @moderation/database migrate"
   },

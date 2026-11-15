@@ -15,17 +15,50 @@ enum ModerationStatus {
 }
 
 model ModerationJob {
-  id          String           @id @default(cuid())
-  status      ModerationStatus @default(QUEUED)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  results     ModerationResult[]
+  id             String           @id @default(cuid())
+  applicationId  String           @map("application_id") @db.VarChar(64)
+  imageAssetId   String           @map("image_asset_id")
+  status         ModerationStatus @default(QUEUED)
+  pipeline       String           @default("interior-default") @db.VarChar(100)
+  context        Json             @default("{}") @db.JsonB
+  idempotencyKey String?          @unique @map("idempotency_key") @db.VarChar(128)
+  errorCode      String?          @map("error_code") @db.VarChar(100)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  startedAt      DateTime?        @map("started_at")
+  completedAt    DateTime?        @map("completed_at")
+  imageAsset     ImageAsset       @relation(fields: [imageAssetId], references: [id], onDelete: Restrict)
+  results        ModerationResult[]
+
+  @@index([applicationId, createdAt])
+  @@index([status, createdAt])
+  @@map("moderation_jobs")
+}
+
+model ImageAsset {
+  id           String          @id @default(cuid())
+  sha256       String          @unique @db.Char(64)
+  objectKey    String          @unique @map("object_key") @db.VarChar(512)
+  mimeType     String          @map("mime_type") @db.VarChar(100)
+  originalName String?         @map("original_name") @db.VarChar(255)
+  sizeBytes    BigInt          @map("size_bytes")
+  width        Int
+  height       Int
+  frameCount   Int             @default(1) @map("frame_count")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  jobs         ModerationJob[]
+
+  @@index([createdAt])
+  @@map("image_assets")
 }
 
 model ModerationResult {
   id        String        @id @default(cuid())
-  jobId     String
+  jobId     String        @map("job_id")
   job       ModerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  payload   Json
-  createdAt DateTime      @default(now())
+  payload   Json          @db.JsonB
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  @@index([jobId, createdAt])
+  @@map("moderation_results")
 }

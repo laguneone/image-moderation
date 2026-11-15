@@ -6,6 +6,8 @@ services:
     environment:
       NODE_ENV: development
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+      API_INTERNAL_URL: http://backend:4000
+      UPLOAD_API_KEY: ${UPLOAD_API_KEY:-}
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     depends_on:
@@ -21,6 +23,16 @@ services:
       PORT: 4000
       DATABASE_URL: postgresql://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-change-me-local}@postgres:5432/${POSTGRES_DB:-moderation}?schema=public
       REDIS_URL: redis://redis:6379
+      UPLOAD_API_KEY: ${UPLOAD_API_KEY:-}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_BUCKET: ${MINIO_BUCKET:-moderation-private}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-moderation}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-local-minio}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-40000000}
+      MAX_IMAGE_SIDE: ${MAX_IMAGE_SIDE:-12000}
     ports:
       - "127.0.0.1:${API_PORT:-4000}:4000"
     depends_on:
@@ -30,6 +42,7 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    command: ["/bin/sh", "-c", "pnpm --filter @moderation/database migrate && pnpm --filter @moderation/api start"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -44,10 +57,13 @@ services:
       NODE_ENV: development
       DATABASE_URL: postgresql://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-change-me-local}@postgres:5432/${POSTGRES_DB:-moderation}?schema=public
       REDIS_URL: redis://redis:6379
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      backend:
         condition: service_healthy
 
   postgres:

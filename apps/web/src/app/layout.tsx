@@ -1,4 +1,5 @@
 import type { ReactElement, ReactNode } from 'react';
+import './globals.css';
 
 export const metadata = { title: 'Image Moderation', description: 'AI/AR content moderation platform' };
 
