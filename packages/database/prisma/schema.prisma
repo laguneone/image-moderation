@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ModerationStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model ModerationJob {
+  id          String           @id @default(cuid())
+  status      ModerationStatus @default(QUEUED)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  results     ModerationResult[]
+}
+
+model ModerationResult {
+  id        String        @id @default(cuid())
+  jobId     String
+  job       ModerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  payload   Json
+  createdAt DateTime      @default(now())
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@moderation/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "dev": "next dev --hostname 0.0.0.0", "build": "next build", "start": "next start --hostname 0.0.0.0", "typecheck": "tsc --noEmit", "lint": "eslint src" },
+  "dependencies": { "next": "^15.1.4", "react": "^19.0.0", "react-dom": "^19.0.0" },
+  "devDependencies": { "@types/node": "^22.10.5", "@types/react": "^19.0.6", "@types/react-dom": "^19.0.3", "eslint": "^9.17.0", "typescript-eslint": "^8.19.1", "typescript": "^5.7.3" }
+}
