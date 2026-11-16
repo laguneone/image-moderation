@@ -101,8 +101,9 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
         forceDeep: initialRuleOutcome.triggerDeepAnalysis,
         maxImageCrops: pipeline.maxImageCrops,
       }) : null;
+      const primaryUnsafeOverruled = canOverridePrimaryUnsafe(safetyResult, deep);
       const riskInput = {
-        nsfwUnsafe: safetyResult.unsafe, sexualSignalCount: metadata.suspiciousKeywords.length,
+        nsfwUnsafe: safetyResult.unsafe, primaryUnsafeOverruled, sexualSignalCount: metadata.suspiciousKeywords.length,
         peoplePresent: scene?.humans.present ?? false, humanBodyPartPresent: scene?.humans.categories.includes('HUMAN_BODY_PART') ?? false,
         interiorContextPresent: scene?.scene.categories.includes('INTERIOR_SCENE') === true && scene.scene.categories.includes('FURNITURE'),
         criticalReview: safetyResult.criticalReview,
@@ -224,6 +225,25 @@ export function parseScene(value: string): { humans: { present: boolean; count: 
   parsed.humans.count = Math.max(count, present ? 1 : 0);
   if (present) parsed.humans.categories = parsed.humans.categories.filter((category) => category !== 'NO_HUMANS');
   return parsed as { humans: { present: boolean; count: number; categories: string[] }; scene: { categories: string[] }; objects: string[] };
+}
+
+export function canOverridePrimaryUnsafe(
+  safety: { unsafe: boolean; categories: string[]; criticalReview: boolean },
+  deep: DeepAnalysisResult | null,
+): boolean {
+  return safety.unsafe
+    && safety.categories.length === 0
+    && !safety.criticalReview
+    && deep?.context?.classification === 'NON_SEXUAL'
+    && !deep.context.sexual_context
+    && !deep.context.fetish_content
+    && deep.composition?.sexualized_focus === false
+    && deep.relationships?.sexualized_interaction === false
+    && deep.crops.status === 'COMPLETED'
+    && (deep.crops.regions?.length ?? 0) > 0
+    && deep.crops.regions?.every((region) => !region.sexual_content) === true
+    && deep.ocr?.suspicious_text === false
+    && deep.arbitration?.recommendation === 'ALLOW';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }

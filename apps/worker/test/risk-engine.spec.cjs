@@ -20,6 +20,14 @@ test('an uncorroborated unsafe primary result requires review instead of restric
   assert.equal(result.decision, 'REVIEW');
 });
 
+test('a primary unsafe signal cleared by complete independent analysis does not add risk points', () => {
+  const result = calculateRisk({ nsfwUnsafe: true, primaryUnsafeOverruled: true, sexualSignalCount: 0, peoplePresent: true, humanBodyPartPresent: false, interiorContextPresent: true });
+  assert.equal(result.nsfwRiskScore, 0);
+  assert.equal(result.domainMismatchScore, 35);
+  assert.equal(result.decision, 'ALLOW');
+  assert.ok(result.reasons.some((reason) => reason.includes('не подтвердился')));
+});
+
 test('suspicious metadata is review evidence and absence does not increase risk', () => {
   const withTerm = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 1, peoplePresent: false, humanBodyPartPresent: false });
   const withoutTerm = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 0, peoplePresent: false, humanBodyPartPresent: false });

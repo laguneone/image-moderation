@@ -1,10 +1,10 @@
-export interface RiskInput { nsfwUnsafe: boolean; sexualSignalCount: number; peoplePresent: boolean; humanBodyPartPresent: boolean; interiorContextPresent?: boolean; criticalReview?: boolean; forceReview?: boolean; sexualizedRelationship?: boolean; sexualizedComposition?: boolean; sexualizedContext?: boolean; suspiciousText?: boolean; cropUnsafe?: boolean; arbitratorRestricted?: boolean; confirmedSexualContent?: boolean; fetishContentDetected?: boolean }
+export interface RiskInput { nsfwUnsafe: boolean; primaryUnsafeOverruled?: boolean; sexualSignalCount: number; peoplePresent: boolean; humanBodyPartPresent: boolean; interiorContextPresent?: boolean; criticalReview?: boolean; forceReview?: boolean; sexualizedRelationship?: boolean; sexualizedComposition?: boolean; sexualizedContext?: boolean; suspiciousText?: boolean; cropUnsafe?: boolean; arbitratorRestricted?: boolean; confirmedSexualContent?: boolean; fetishContentDetected?: boolean }
 export interface RiskOutput { nsfwRiskScore: number; domainMismatchScore: number; decision: 'ALLOW' | 'REVIEW' | 'RESTRICT' | 'CRITICAL_REVIEW'; confidence: number | null; criticalFlags: string[]; reasons: string[] }
 export interface RiskConfig { allowMax: number; reviewMax: number; primaryNsfwPoints: number; metadataSignalPoints: number; relationshipPoints: number; compositionPoints: number; contextPoints: number; textPoints: number; cropPoints: number; arbitratorReviewPoints: number; peopleMismatchPoints: number; bodyPartMismatchPoints: number }
 
 export function calculateRisk(input: RiskInput, config: RiskConfig = loadRiskConfig()): RiskOutput {
   const nsfwRiskScore = Math.min(100, Math.max(
-    input.nsfwUnsafe ? config.primaryNsfwPoints : 0,
+    input.nsfwUnsafe && !input.primaryUnsafeOverruled ? config.primaryNsfwPoints : 0,
     input.sexualSignalCount > 0 ? config.metadataSignalPoints : 0,
     input.sexualizedRelationship ? config.relationshipPoints : 0,
     input.sexualizedComposition ? config.compositionPoints : 0,
@@ -17,7 +17,8 @@ export function calculateRisk(input: RiskInput, config: RiskConfig = loadRiskCon
   const domainNeedsReview = domainMismatchScore > config.allowMax && (!input.interiorContextPresent || input.humanBodyPartPresent);
   const decision = input.criticalReview ? 'CRITICAL_REVIEW' : input.confirmedSexualContent || input.fetishContentDetected || nsfwRiskScore > config.reviewMax ? 'RESTRICT' : input.forceReview || nsfwRiskScore > config.allowMax || domainNeedsReview ? 'REVIEW' : 'ALLOW';
   const reasons = [
-    ...(input.nsfwUnsafe ? ['Первичная проверка Nemotron подала сигнал о небезопасном содержимом; требуется дополнительная оценка.'] : []),
+    ...(input.nsfwUnsafe && input.primaryUnsafeOverruled ? ['Сигнал Nemotron не подтвердился: независимый контекстный анализ, композиция, все фрагменты и арбитр дали безопасную оценку.'] : []),
+    ...(input.nsfwUnsafe && !input.primaryUnsafeOverruled ? ['Первичная проверка Nemotron подала сигнал о небезопасном содержимом; требуется дополнительная оценка.'] : []),
     ...(input.sexualSignalCount > 0 && !input.nsfwUnsafe ? ['В метаданных или имени файла обнаружены подозрительные термины.'] : []),
     ...(input.peoplePresent ? ['Обнаружены люди или человекоподобные объекты; сигнал влияет на доменное соответствие.'] : []),
     ...(input.humanBodyPartPresent ? ['Обнаружены отдельные части тела; требуется дополнительная проверка.'] : []),

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseSafety, parseScene } = require('../dist/worker.module.js');
+const { canOverridePrimaryUnsafe, parseSafety, parseScene } = require('../dist/worker.module.js');
 
 test('Nemotron uses User Safety and treats categories as optional', () => {
   assert.deepEqual(parseSafety('Safety: safe\nCategories: none'), { unsafe: false, categories: [], criticalReview: false });
@@ -33,4 +33,21 @@ test('Qwen output must have consistent counts and supported categories', () => {
   assert.equal(trueWithoutCount.humans.count, 1);
   assert.deepEqual(parseScene(JSON.stringify({ ...valid, humans: { present: false, count: 1, categories: ['NO_HUMANS'] } })).humans.categories, []);
   assert.throws(() => parseScene(JSON.stringify({ ...valid, scene: { categories: ['UNKNOWN_SCENE'] } })), /unsupported/);
+});
+
+test('only a complete safe consensus can overrule an unclassified Nemotron unsafe signal', () => {
+  const safeDeep = {
+    context: { classification: 'NON_SEXUAL', sexual_context: false, fetish_content: false },
+    composition: { sexualized_focus: false },
+    relationships: { sexualized_interaction: false },
+    crops: { status: 'COMPLETED', regions: [{ sexual_content: false }] },
+    ocr: { suspicious_text: false },
+    arbitration: { recommendation: 'ALLOW' },
+  };
+  const safety = { unsafe: true, categories: [], criticalReview: false };
+  assert.equal(canOverridePrimaryUnsafe(safety, safeDeep), true);
+  assert.equal(canOverridePrimaryUnsafe(safety, { ...safeDeep, crops: { status: 'SKIPPED_IMAGE_TOO_SMALL_OR_DISABLED' } }), false);
+  assert.equal(canOverridePrimaryUnsafe(safety, { ...safeDeep, context: { ...safeDeep.context, classification: 'AMBIGUOUS' } }), false);
+  assert.equal(canOverridePrimaryUnsafe({ ...safety, categories: ['sexual content'] }, safeDeep), false);
+  assert.equal(canOverridePrimaryUnsafe({ ...safety, criticalReview: true }, safeDeep), false);
 });
