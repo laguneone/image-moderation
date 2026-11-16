@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { canOverridePrimaryUnsafe, parseSafety, parseScene } = require('../dist/worker.module.js');
+const { canOverridePrimaryUnsafe, hasPotentialSexualObject, parseSafety, parseScene } = require('../dist/worker.module.js');
 
 test('Nemotron uses User Safety and treats categories as optional', () => {
   assert.deepEqual(parseSafety('Safety: safe\nCategories: none'), { unsafe: false, categories: [], criticalReview: false });
@@ -37,6 +37,7 @@ test('Qwen output must have consistent counts and supported categories', () => {
 
 test('only a complete safe consensus can overrule an unclassified Nemotron unsafe signal', () => {
   const safeDeep = {
+    sceneDecomposition: { persons: [], objects: ['sofa', 'coffee table', 'plant'] },
     context: { classification: 'NON_SEXUAL', sexual_context: false, fetish_content: false },
     composition: { sexualized_focus: false },
     relationships: { sexualized_interaction: false },
@@ -45,9 +46,20 @@ test('only a complete safe consensus can overrule an unclassified Nemotron unsaf
     arbitration: { recommendation: 'ALLOW' },
   };
   const safety = { unsafe: true, categories: [], criticalReview: false };
-  assert.equal(canOverridePrimaryUnsafe(safety, safeDeep), true);
-  assert.equal(canOverridePrimaryUnsafe(safety, { ...safeDeep, crops: { status: 'SKIPPED_IMAGE_TOO_SMALL_OR_DISABLED' } }), false);
-  assert.equal(canOverridePrimaryUnsafe(safety, { ...safeDeep, context: { ...safeDeep.context, classification: 'AMBIGUOUS' } }), false);
-  assert.equal(canOverridePrimaryUnsafe({ ...safety, categories: ['sexual content'] }, safeDeep), false);
-  assert.equal(canOverridePrimaryUnsafe({ ...safety, criticalReview: true }, safeDeep), false);
+  const objectOnlyScene = { humans: { present: false, count: 0, categories: ['NO_HUMANS'] }, scene: { categories: ['INTERIOR_SCENE', 'FURNITURE'] }, objects: ['sofa', 'plant'] };
+  assert.equal(canOverridePrimaryUnsafe(safety, safeDeep, objectOnlyScene, false), true);
+  const skippedCropDeep = { ...safeDeep, crops: { status: 'SKIPPED_IMAGE_TOO_SMALL_OR_DISABLED' } };
+  assert.equal(canOverridePrimaryUnsafe(safety, skippedCropDeep, objectOnlyScene, true), true);
+  assert.equal(canOverridePrimaryUnsafe(safety, skippedCropDeep, objectOnlyScene, false), false);
+  assert.equal(canOverridePrimaryUnsafe(safety, skippedCropDeep, { ...objectOnlyScene, objects: ['vibrator'] }, true), false);
+  assert.equal(canOverridePrimaryUnsafe(safety, skippedCropDeep, { ...objectOnlyScene, humans: { present: true, count: 1, categories: ['REAL_PERSON'] } }, true), false);
+  assert.equal(canOverridePrimaryUnsafe(safety, { ...safeDeep, context: { ...safeDeep.context, classification: 'AMBIGUOUS' } }, objectOnlyScene, false), false);
+  assert.equal(canOverridePrimaryUnsafe({ ...safety, categories: ['sexual content'] }, safeDeep, objectOnlyScene, false), false);
+  assert.equal(canOverridePrimaryUnsafe({ ...safety, criticalReview: true }, safeDeep, objectOnlyScene, false), false);
+});
+
+test('potential sexual objects are detected in English and Russian scene labels', () => {
+  assert.equal(hasPotentialSexualObject(['sofa', 'coffee table', 'vibrator']), true);
+  assert.equal(hasPotentialSexualObject(['диван', 'мастурбатор']), true);
+  assert.equal(hasPotentialSexualObject(['sofa', 'lamp', 'plant']), false);
 });

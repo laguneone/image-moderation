@@ -92,20 +92,23 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
       }
       const rules = await this.config.activeRules();
       const initialRuleOutcome = evaluateRules(rules, { nsfwUnsafe: safetyResult.unsafe, peoplePresent: scene?.humans.present ?? false, criticalReview: safetyResult.criticalReview, suspiciousText: false, sexualizedContext: false, sexualizedInteraction: false }, job.applicationId);
+      const suspiciousSexualObject = hasPotentialSexualObject(scene?.objects ?? []);
       const deep: DeepAnalysisResult | null = scene && pipeline.deepAnalysis ? await this.deepAnalyzer.analyze(job.id, image, job.imageAsset.mimeType, {
         safety: safetyResult,
         scene,
         metadata: { suspiciousKeywords: metadata.suspiciousKeywords, sourceUrls: metadata.sourceUrls },
         width: job.imageAsset.width,
         height: job.imageAsset.height,
-        forceDeep: initialRuleOutcome.triggerDeepAnalysis,
+        forceDeep: initialRuleOutcome.triggerDeepAnalysis || suspiciousSexualObject,
         maxImageCrops: pipeline.maxImageCrops,
       }) : null;
-      const primaryUnsafeOverruled = canOverridePrimaryUnsafe(safetyResult, deep);
+      const cropSkippedForSmallImage = pipeline.maxImageCrops > 0 && (job.imageAsset.width < 512 || job.imageAsset.height < 512);
+      const primaryUnsafeOverruled = canOverridePrimaryUnsafe(safetyResult, deep, scene, cropSkippedForSmallImage);
       const riskInput = {
         nsfwUnsafe: safetyResult.unsafe, primaryUnsafeOverruled, sexualSignalCount: metadata.suspiciousKeywords.length,
         peoplePresent: scene?.humans.present ?? false, humanBodyPartPresent: scene?.humans.categories.includes('HUMAN_BODY_PART') ?? false,
         interiorContextPresent: scene?.scene.categories.includes('INTERIOR_SCENE') === true && scene.scene.categories.includes('FURNITURE'),
+        suspiciousSexualObject,
         criticalReview: safetyResult.criticalReview,
         sexualizedRelationship: deep?.relationships?.sexualized_interaction,
         sexualizedComposition: deep?.composition?.sexualized_focus,
@@ -230,20 +233,43 @@ export function parseScene(value: string): { humans: { present: boolean; count: 
 export function canOverridePrimaryUnsafe(
   safety: { unsafe: boolean; categories: string[]; criticalReview: boolean },
   deep: DeepAnalysisResult | null,
+  scene: ReturnType<typeof parseScene> | null,
+  cropSkippedForSmallImage: boolean,
 ): boolean {
+  if (!safety.unsafe || safety.categories.length > 0 || safety.criticalReview || !deep || !scene) return false;
+  const completedSafeCrops = deep.crops.status === 'COMPLETED'
+    && (deep.crops.regions?.length ?? 0) > 0
+    && deep.crops.regions?.every((region) => !region.sexual_content) === true;
+  const decomposition = deep.sceneDecomposition;
+  const decompositionPeople = decomposition && Array.isArray(decomposition.persons) ? decomposition.persons : null;
+  const sceneObjects = [
+    ...scene.objects,
+    ...(decomposition && Array.isArray(decomposition.objects) ? decomposition.objects.filter((object): object is string => typeof object === 'string') : []),
+  ];
+  const safeObjectOnlyScene = cropSkippedForSmallImage
+    && deep.crops.status === 'SKIPPED_IMAGE_TOO_SMALL_OR_DISABLED'
+    && !scene.humans.present
+    && scene.humans.count === 0
+    && !scene.humans.categories.includes('HUMAN_BODY_PART')
+    && !scene.humans.categories.includes('UNCERTAIN_HUMAN')
+    && scene.scene.categories.includes('INTERIOR_SCENE')
+    && scene.scene.categories.includes('FURNITURE')
+    && !hasPotentialSexualObject(sceneObjects)
+    && decompositionPeople?.length === 0;
   return safety.unsafe
-    && safety.categories.length === 0
-    && !safety.criticalReview
     && deep?.context?.classification === 'NON_SEXUAL'
     && !deep.context.sexual_context
     && !deep.context.fetish_content
     && deep.composition?.sexualized_focus === false
     && deep.relationships?.sexualized_interaction === false
-    && deep.crops.status === 'COMPLETED'
-    && (deep.crops.regions?.length ?? 0) > 0
-    && deep.crops.regions?.every((region) => !region.sexual_content) === true
+    && (completedSafeCrops || safeObjectOnlyScene)
     && deep.ocr?.suspicious_text === false
     && deep.arbitration?.recommendation === 'ALLOW';
+}
+
+export function hasPotentialSexualObject(objects: string[]): boolean {
+  const pattern = /\b(?:sex[\s-]?toys?|vibrators?|dildos?|masturbators?|erotic\s+toys?|sexual\s+toys?)\b|(?:секс[\s-]?игрушк\p{L}*|вибратор\p{L}*|фаллоимитатор\p{L}*|мастурбатор\p{L}*|дилдо\p{L}*|эротическ\p{L}*\s+(?:игрушк\p{L}*|девайс\p{L}*)|вагинальн\p{L}*\s+стимулятор\p{L}*)/iu;
+  return objects.some((object) => pattern.test(object));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }

@@ -28,6 +28,12 @@ test('a primary unsafe signal cleared by complete independent analysis does not 
   assert.ok(result.reasons.some((reason) => reason.includes('не подтвердился')));
 });
 
+test('a clearly identified sexual object forces deeper review', () => {
+  const result = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 0, peoplePresent: false, humanBodyPartPresent: false, interiorContextPresent: true, suspiciousSexualObject: true });
+  assert.equal(result.decision, 'REVIEW');
+  assert.ok(result.reasons.some((reason) => reason.includes('сексуальную игрушку')));
+});
+
 test('suspicious metadata is review evidence and absence does not increase risk', () => {
   const withTerm = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 1, peoplePresent: false, humanBodyPartPresent: false });
   const withoutTerm = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 0, peoplePresent: false, humanBodyPartPresent: false });
