@@ -9,7 +9,7 @@ const QWEN_MODEL = process.env.OPENROUTER_QWEN_MODEL ?? 'qwen/qwen3.6-flash';
 const GEMINI_MODEL = process.env.OPENROUTER_GEMINI_MODEL ?? 'google/gemini-3-flash-preview';
 const ARBITER_MODEL = process.env.OPENROUTER_ARBITER_MODEL ?? 'openai/gpt-4.1-mini';
 const SCHEMA = {
-  scene_decomposition: schema('scene_decomposition', { scene_type: { type: 'string' }, foreground: stringArray(), midground: stringArray(), background: stringArray(), persons: stringArray(), objects: stringArray(), artwork: stringArray(), text_regions: stringArray(), uncertainties: stringArray() }, ['scene_type', 'foreground', 'midground', 'background', 'persons', 'objects', 'artwork', 'text_regions', 'uncertainties']),
+  scene_decomposition: schema('scene_decomposition', { scene_type: { type: 'string', maxLength: 500 }, foreground: stringArray(), midground: stringArray(), background: stringArray(), persons: stringArray(), objects: stringArray(), artwork: stringArray(), text_regions: stringArray(), uncertainties: stringArray() }, ['scene_type', 'foreground', 'midground', 'background', 'persons', 'objects', 'artwork', 'text_regions', 'uncertainties']),
   relationships: schema('relationship_findings', { relations: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['subject_id', 'relation', 'object_id', 'evidence'], properties: { subject_id: { type: 'string' }, relation: { type: 'string' }, object_id: { type: 'string' }, evidence: { type: 'string' } } } }, sexualized_interaction: { type: 'boolean' }, evidence: stringArray() }, ['relations', 'sexualized_interaction', 'evidence']),
   composition: schema('composition_findings', { visual_focus: { type: 'string' }, unusual_cropping: { type: 'boolean' }, sexualized_focus: { type: 'boolean' }, evidence: stringArray() }, ['visual_focus', 'unusual_cropping', 'sexualized_focus', 'evidence']),
   context: schema('context_findings', { classification: { type: 'string', enum: ['NON_SEXUAL', 'SEXUALIZED', 'AMBIGUOUS'] }, explanation: { type: 'string' }, sexual_context: { type: 'boolean' } }, ['classification', 'explanation', 'sexual_context']),
@@ -163,10 +163,10 @@ function parseJson<T>(value: string, stage: string): T {
   } catch { throw new Error(`${stage} returned malformed JSON.`); }
 }
 
-function validateStageOutput(stage: string, value: Record<string, unknown>): boolean {
+export function validateStageOutput(stage: string, value: Record<string, unknown>): boolean {
   switch (stage) {
     case 'scene_decomposition':
-      return typeof value.scene_type === 'string' && ['INTERIOR_SCENE', 'FURNITURE', 'WALL_ART', 'DECOR', 'TEXTURE', 'AR_OBJECT', 'OTHER', 'UNKNOWN'].includes(value.scene_type)
+      return typeof value.scene_type === 'string' && value.scene_type.length <= 500
         && ['foreground', 'midground', 'background', 'persons', 'objects', 'artwork', 'text_regions', 'uncertainties'].every((key) => isTextArray(value[key]));
     case 'relationships':
     case 'relationship_analysis':

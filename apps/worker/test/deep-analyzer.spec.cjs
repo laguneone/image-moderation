@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const sharp = require('sharp');
-const { DeepAnalyzer } = require('../dist/deep-analyzer.js');
+const { DeepAnalyzer, validateStageOutput } = require('../dist/deep-analyzer.js');
 const { OpenRouterClient } = require('../dist/openrouter.client.js');
 
 test('anomaly triggers bounded deep stages with explicit local model fixtures', async () => {
@@ -44,4 +44,13 @@ test('anomaly triggers bounded deep stages with explicit local model fixtures', 
     if (previousCrops === undefined) delete process.env.MAX_IMAGE_CROPS;
     else process.env.MAX_IMAGE_CROPS = previousCrops;
   }
+});
+
+test('scene decomposition accepts a bounded descriptive scene type per its JSON schema', () => {
+  const response = {
+    scene_type: 'Indoor mirror selfie in a room', foreground: [], midground: [], background: [],
+    persons: [], objects: [], artwork: [], text_regions: [], uncertainties: [],
+  };
+  assert.equal(validateStageOutput('scene_decomposition', response), true);
+  assert.equal(validateStageOutput('scene_decomposition', { ...response, scene_type: 'x'.repeat(501) }), false);
 });
