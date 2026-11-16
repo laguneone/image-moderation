@@ -169,10 +169,10 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
 export class WorkerModule {}
 
 export function parseSafety(value: string): { unsafe: boolean; categories: string[]; criticalReview: boolean } {
-  const safety = value.match(/\bsafety\s*:\s*(safe|unsafe)\b/iu);
-  const categories = value.match(/\bcategories\s*:\s*([^\r\n]+)/iu);
-  if (!safety || !categories) throw new Error('Nemotron response did not include valid Safety and Categories labels.');
-  const labels = categories[1].trim().toLowerCase();
+  const safety = value.match(/^\s*(?:user\s+safety|safety)\s*:\s*(safe|unsafe)\b/imu);
+  const categories = value.match(/^\s*(?:safety\s+)?categories\s*:\s*([^\r\n]+)/imu);
+  if (!safety) throw new Error('Nemotron response did not include a valid User Safety label.');
+  const labels = categories?.[1].trim().toLowerCase() ?? 'none';
   const categoryList = labels === 'none' ? [] : labels.split(/[,;|]/u).map((category) => category.trim()).filter(Boolean);
   if (categoryList.length === 0 && labels !== 'none') throw new Error('Nemotron returned an invalid Categories label.');
   const criticalReview = categoryList.some((category) => /\b(?:csam|child sexual|sexual.{0,20}(?:minor|child)|(?:minor|child).{0,20}sexual|sexual exploitation of children)\b/iu.test(category));
@@ -182,11 +182,13 @@ export function parseSafety(value: string): { unsafe: boolean; categories: strin
 export function parseScene(value: string): { humans: { present: boolean; count: number; categories: string[] }; scene: { categories: string[] }; objects: string[] } {
   let parsed: unknown;
   try { parsed = JSON.parse(value); } catch { throw new Error('Qwen returned malformed JSON.'); }
+  if (Array.isArray(parsed) && parsed.length === 1) parsed = parsed[0];
   if (!isRecord(parsed) || !isRecord(parsed.humans) || !isRecord(parsed.scene) || typeof parsed.humans.present !== 'boolean' || !Number.isSafeInteger(parsed.humans.count) || !isStringArray(parsed.humans.categories) || !isStringArray(parsed.scene.categories) || !isStringArray(parsed.objects)) {
     throw new Error('Qwen response is missing required people or scene fields.');
   }
   const count = parsed.humans.count as number;
-  if (count < 0 || (parsed.humans.present && count === 0) || (!parsed.humans.present && count > 0)) throw new Error('Qwen response has inconsistent human count.');
+  if (count < 0) throw new Error('Qwen response has an invalid human count.');
+  if (count > 0) parsed.humans.present = true;
   const humanCategories = ['REAL_PERSON', 'PERSON_IN_ARTWORK', 'HUMANOID_CHARACTER', 'ANTHROPOMORPHIC_CHARACTER', 'HUMAN_BODY_PART', 'UNCERTAIN_HUMAN', 'NO_HUMANS'];
   const sceneCategories = ['INTERIOR_SCENE', 'FURNITURE', 'WALL_ART', 'DECOR', 'TEXTURE', 'AR_OBJECT', 'OTHER', 'UNKNOWN'];
   if (parsed.humans.categories.some((category) => !humanCategories.includes(category)) || parsed.scene.categories.some((category) => !sceneCategories.includes(category)) || parsed.objects.length > 100 || parsed.objects.some((object) => object.length > 200)) {

@@ -1,4 +1,4 @@
-import { ADMIN_COOKIE, isSameOriginRequest, verifyAdminToken } from '../../../../lib/admin-auth';
+import { isSameOriginRequest } from '../../../../lib/request-security';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,8 +8,6 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
 export async function POST(request: Request, context: RouteContext): Promise<Response> { return proxy(request, context, 'POST'); }
 
 async function proxy(request: Request, context: RouteContext, method: 'GET' | 'POST'): Promise<Response> {
-  const session = verifyAdminToken(cookieValue(request.headers.get('cookie'), ADMIN_COOKIE));
-  if (!session) return Response.json({ error: 'Требуется авторизация администратора.' }, { status: 401 });
   if (method === 'POST' && !isSameOriginRequest(request)) {
     return Response.json({ error: 'Недопустимый источник запроса.' }, { status: 403 });
   }
@@ -20,12 +18,8 @@ async function proxy(request: Request, context: RouteContext, method: 'GET' | 'P
   if (!apiUrl || !apiKey) return Response.json({ error: 'Админ API не настроен.' }, { status: 503 });
   const target = new URL(`/api/v1/admin/${path.map(encodeURIComponent).join('/')}`, apiUrl);
   target.search = new URL(request.url).search;
-  const headers = new Headers({ 'x-api-key': apiKey, 'x-admin-id': session.id, 'x-admin-role': session.role });
-  if (path[0] === 'configuration' || path[0] === 'analytics') {
-    if (session.role !== 'ADMIN') return Response.json({ error: 'Раздел доступен только администратору.' }, { status: 403 });
-    const adminToken = cookieValue(request.headers.get('cookie'), ADMIN_COOKIE);
-    if (adminToken) headers.set('x-admin-session', adminToken);
-  }
+  const administrativeSection = path[0] === 'configuration' || path[0] === 'analytics';
+  const headers = new Headers({ 'x-api-key': apiKey, 'x-admin-id': 'local-admin', 'x-admin-role': administrativeSection ? 'ADMIN' : 'SPECIALIST' });
   const requestHeaders = new Headers(request.headers);
   const contentType = requestHeaders.get('content-type');
   if (contentType) headers.set('content-type', contentType);
@@ -37,8 +31,4 @@ async function proxy(request: Request, context: RouteContext, method: 'GET' | 'P
   if (disposition) responseHeaders.set('content-disposition', disposition);
   responseHeaders.set('X-Content-Type-Options', 'nosniff');
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
-}
-
-function cookieValue(header: string | null, name: string): string | undefined {
-  return header?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
 }

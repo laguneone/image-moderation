@@ -2,9 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseSafety, parseScene } = require('../dist/worker.module.js');
 
-test('Nemotron requires explicit safety and category labels', () => {
+test('Nemotron uses User Safety and treats categories as optional', () => {
   assert.deepEqual(parseSafety('Safety: safe\nCategories: none'), { unsafe: false, categories: [], criticalReview: false });
-  assert.throws(() => parseSafety('looks safe'), /valid Safety and Categories labels/);
+  assert.deepEqual(parseSafety('User Safety: safe\nResponse Safety: safe'), { unsafe: false, categories: [], criticalReview: false });
+  assert.deepEqual(parseSafety('User Safety: unsafe\nResponse Safety: safe'), { unsafe: true, categories: [], criticalReview: false });
+  assert.deepEqual(parseSafety('User Safety: unsafe\nSafety Categories: explicit content'), { unsafe: true, categories: ['explicit content'], criticalReview: false });
+  assert.throws(() => parseSafety('looks safe'), /valid User Safety label/);
+  assert.throws(() => parseSafety('Response Safety: unsafe'), /valid User Safety label/);
 });
 
 test('critical sexual-minor category triggers specialized review', () => {
@@ -16,6 +20,9 @@ test('critical sexual-minor category triggers specialized review', () => {
 test('Qwen output must have consistent counts and supported categories', () => {
   const valid = { humans: { present: true, count: 1, categories: ['REAL_PERSON'] }, scene: { categories: ['INTERIOR_SCENE'] }, objects: ['chair'] };
   assert.deepEqual(parseScene(JSON.stringify(valid)), valid);
-  assert.throws(() => parseScene(JSON.stringify({ ...valid, humans: { ...valid.humans, count: 0 } })), /inconsistent human count/);
+  assert.deepEqual(parseScene(JSON.stringify([valid])), valid);
+  assert.throws(() => parseScene(JSON.stringify([valid, valid])), /missing required/);
+  assert.equal(parseScene(JSON.stringify({ ...valid, humans: { present: false, count: 1, categories: ['REAL_PERSON'] } })).humans.present, true);
+  assert.equal(parseScene(JSON.stringify({ ...valid, humans: { present: true, count: 0, categories: ['REAL_PERSON'] } })).humans.present, true);
   assert.throws(() => parseScene(JSON.stringify({ ...valid, scene: { categories: ['UNKNOWN_SCENE'] } })), /unsupported/);
 });

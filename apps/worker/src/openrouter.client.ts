@@ -46,6 +46,7 @@ export class OpenRouterClient {
         messages: [{ role: 'user', content }],
         ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
         ...safeGenerationParams(options.generationParams),
+        ...(jsonSchema ? { provider: { require_parameters: true } } : {}),
         ...(jsonSchema ? { response_format: { type: 'json_schema', json_schema: jsonSchema } } : {}),
         usage: { include: true },
       }),

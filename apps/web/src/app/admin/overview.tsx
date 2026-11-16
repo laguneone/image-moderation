@@ -14,7 +14,7 @@ export interface JobRow {
   preview_allowed: boolean;
 }
 
-export function AdminOverview({ userId, role }: { userId: string; role: 'ADMIN' | 'SPECIALIST' }): React.JSX.Element {
+export function AdminOverview({ role }: { role: 'ADMIN' | 'SPECIALIST' }): React.JSX.Element {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -35,14 +35,9 @@ export function AdminOverview({ userId, role }: { userId: string; role: 'ADMIN' 
 
   useEffect(() => { void load(); }, []);
 
-  async function logout(): Promise<void> {
-    await fetch('/api/admin/session', { method: 'DELETE' });
-    window.location.assign('/admin/login');
-  }
-
   return <main className="admin-shell">
-    <header className="admin-header"><div><p className="admin-eyebrow">NSFW Filter</p><h1>Панель модерации</h1></div><div className="admin-account"><span>{userId} · {role === 'SPECIALIST' ? 'специалист' : 'администратор'}</span><button className="admin-button subtle" onClick={logout}>Выйти</button></div></header>
-    <nav className="admin-nav"><Link aria-current="page" href="/admin">Обзор</Link><Link href="/admin/moderations">История проверок</Link>{role === 'ADMIN' && <><Link href="/admin/config">Конфигурация</Link><Link href="/admin/analytics">Аналитика</Link></>}<Link href="/">Загрузить изображение</Link></nav>
+    <header className="admin-header"><div><p className="admin-eyebrow">NSFW Filter</p><h1>Панель модерации</h1></div><span>Локальный доступ · полный доступ</span></header>
+    <nav className="admin-nav"><Link aria-current="page" href="/admin">Обзор</Link><Link href="/admin/moderations">История проверок</Link><Link href="/admin/config">Конфигурация</Link><Link href="/admin/analytics">Аналитика</Link><Link href="/">Загрузить изображение</Link></nav>
     {error && <p className="admin-error admin-alert" role="alert">{error}</p>}
     {busy && !dashboard ? <p className="admin-muted">Загружаем данные…</p> : dashboard && <>
       <section className="admin-kpis">

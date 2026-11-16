@@ -1,11 +1,10 @@
 import { BadRequestException, Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiKeyGuard } from '../common/api-key.guard';
-import { AdminSessionGuard } from '../common/admin-session.guard';
 import { PrismaService } from '../database/prisma.service';
 
 @Controller('admin/analytics')
-@UseGuards(ApiKeyGuard, AdminSessionGuard)
+@UseGuards(ApiKeyGuard)
 export class AnalyticsController {
   constructor(private readonly prisma: PrismaService) {}
 

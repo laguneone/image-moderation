@@ -2,11 +2,10 @@ import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Query
 import { ConfigStatus, Prisma } from '@moderation/database';
 import { ApiKeyGuard } from '../common/api-key.guard';
 import { PrismaService } from '../database/prisma.service';
-import { AdminSessionGuard } from '../common/admin-session.guard';
 import { evaluateRules } from '@moderation/shared';
 
 @Controller('admin/configuration')
-@UseGuards(ApiKeyGuard, AdminSessionGuard)
+@UseGuards(ApiKeyGuard)
 export class ConfigurationController {
   constructor(private readonly prisma: PrismaService) {}
 

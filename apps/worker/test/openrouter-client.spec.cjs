@@ -48,3 +48,27 @@ test('explicit mode supplies structured fixtures for deep analysis stages', asyn
     if (priorKey !== undefined) process.env.OPENROUTER_API_KEY = priorKey;
   }
 });
+
+test('structured requests require a provider that honors their response schema', async () => {
+  const priorKey = process.env.OPENROUTER_API_KEY;
+  const priorBase = process.env.OPENROUTER_BASE_URL;
+  const priorFetch = global.fetch;
+  let requestBody;
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  process.env.OPENROUTER_BASE_URL = 'https://openrouter.test/api';
+  global.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), { status: 200 });
+  };
+  try {
+    await new OpenRouterClient().analyzeText('qwen/qwen3.6-flash', 'Return an object.', { name: 'result', strict: true, schema: { type: 'object' } });
+    assert.deepEqual(requestBody.provider, { require_parameters: true });
+    assert.equal(requestBody.response_format.type, 'json_schema');
+  } finally {
+    global.fetch = priorFetch;
+    if (priorKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = priorKey;
+    if (priorBase === undefined) delete process.env.OPENROUTER_BASE_URL;
+    else process.env.OPENROUTER_BASE_URL = priorBase;
+  }
+});
