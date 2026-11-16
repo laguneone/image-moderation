@@ -81,21 +81,30 @@ export class ModerationsService {
   async getStatus(id: string): Promise<{
     job_id: string;
     status: string;
-    decision: null;
+    decision: string | null;
+    result: { nsfw_risk_score: number; domain_mismatch_score: number; confidence: number | null; reasons: unknown; critical_flags: unknown; details: unknown } | null;
     error_code: string | null;
     created_at: Date;
     image: { mime_type: string; size_bytes: number; width: number; height: number };
   }> {
     const job = await this.prisma.moderationJob.findUnique({
       where: { id },
-      include: { imageAsset: true },
+      include: { imageAsset: true, results: { orderBy: { createdAt: 'desc' }, take: 1 } },
     });
     if (!job) throw new NotFoundException('Moderation job was not found.');
 
     return {
       job_id: job.id,
       status: job.status.toLowerCase(),
-      decision: null,
+      decision: job.results[0]?.decision ?? null,
+      result: job.results[0] ? {
+        nsfw_risk_score: job.results[0].nsfwRiskScore,
+        domain_mismatch_score: job.results[0].domainMismatchScore,
+        confidence: job.results[0].confidence,
+        reasons: job.results[0].reasons,
+        critical_flags: job.results[0].criticalFlags,
+        details: job.results[0].payload,
+      } : null,
       error_code: job.errorCode,
       created_at: job.createdAt,
       image: {

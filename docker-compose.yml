@@ -58,6 +58,25 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-change-me-local}@postgres:5432/${POSTGRES_DB:-moderation}?schema=public
       REDIS_URL: redis://redis:6379
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      QUEUE_ATTEMPTS: ${QUEUE_ATTEMPTS:-3}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_BUCKET: ${MINIO_BUCKET:-moderation-private}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-moderation}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-local-minio}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}
+      OPENROUTER_NEMOTRON_MODEL: ${OPENROUTER_NEMOTRON_MODEL:-nvidia/nemotron-3.5-content-safety}
+      OPENROUTER_QWEN_MODEL: ${OPENROUTER_QWEN_MODEL:-qwen/qwen3.6-flash}
+      OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-http://localhost:3000}
+      MODERATION_TEST_MODE: ${MODERATION_TEST_MODE:-false}
+      RISK_ALLOW_MAX: ${RISK_ALLOW_MAX:-29}
+      RISK_REVIEW_MAX: ${RISK_REVIEW_MAX:-69}
+      RISK_PRIMARY_NSFW_POINTS: ${RISK_PRIMARY_NSFW_POINTS:-70}
+      RISK_METADATA_SIGNAL_POINTS: ${RISK_METADATA_SIGNAL_POINTS:-30}
+      RISK_PEOPLE_MISMATCH_POINTS: ${RISK_PEOPLE_MISMATCH_POINTS:-35}
+      RISK_BODY_PART_MISMATCH_POINTS: ${RISK_BODY_PART_MISMATCH_POINTS:-35}
     depends_on:
       postgres:
         condition: service_healthy

@@ -14,6 +14,12 @@ enum ModerationStatus {
   FAILED
 }
 
+enum StageStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 model ModerationJob {
   id             String           @id @default(cuid())
   applicationId  String           @map("application_id") @db.VarChar(64)
@@ -29,6 +35,8 @@ model ModerationJob {
   completedAt    DateTime?        @map("completed_at")
   imageAsset     ImageAsset       @relation(fields: [imageAssetId], references: [id], onDelete: Restrict)
   results        ModerationResult[]
+  stageExecutions StageExecution[]
+  invocations    ModelInvocation[]
 
   @@index([applicationId, createdAt])
   @@index([status, createdAt])
@@ -53,12 +61,57 @@ model ImageAsset {
 }
 
 model ModerationResult {
-  id        String        @id @default(cuid())
-  jobId     String        @map("job_id")
-  job       ModerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  payload   Json          @db.JsonB
-  createdAt DateTime      @default(now()) @map("created_at")
+  id                    String        @id @default(cuid())
+  jobId                 String        @map("job_id")
+  job                   ModerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  nsfwRiskScore         Int           @map("nsfw_risk_score")
+  domainMismatchScore   Int           @map("domain_mismatch_score")
+  confidence            Float?
+  decision              String        @db.VarChar(32)
+  criticalFlags         Json          @default("[]") @map("critical_flags") @db.JsonB
+  reasons               Json          @default("[]") @db.JsonB
+  payload               Json          @db.JsonB
+  createdAt             DateTime      @default(now()) @map("created_at")
 
   @@index([jobId, createdAt])
   @@map("moderation_results")
+}
+
+model StageExecution {
+  id                String        @id @default(cuid())
+  jobId             String        @map("job_id")
+  job               ModerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  stageType         String        @map("stage_type") @db.VarChar(64)
+  status            StageStatus
+  startedAt         DateTime      @default(now()) @map("started_at")
+  completedAt       DateTime?     @map("completed_at")
+  durationMs        Int?          @map("duration_ms")
+  modelId           String?       @map("model_id") @db.VarChar(200)
+  promptVersionId   String?       @map("prompt_version_id") @db.VarChar(64)
+  normalizedOutput  Json?         @map("normalized_output") @db.JsonB
+  error             String?       @db.Text
+  invocations       ModelInvocation[]
+
+  @@index([jobId, startedAt])
+  @@map("stage_executions")
+}
+
+model ModelInvocation {
+  id               String         @id @default(cuid())
+  jobId            String         @map("job_id")
+  job              ModerationJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  stageExecutionId String?        @map("stage_execution_id")
+  stageExecution   StageExecution? @relation(fields: [stageExecutionId], references: [id], onDelete: SetNull)
+  modelId          String         @map("model_id") @db.VarChar(200)
+  provider         String?        @db.VarChar(100)
+  requestId        String?        @map("request_id") @db.VarChar(200)
+  inputTokens      Int?           @map("input_tokens")
+  outputTokens     Int?           @map("output_tokens")
+  costUsd          Decimal?       @map("cost_usd") @db.Decimal(18, 10)
+  latencyMs        Int            @map("latency_ms")
+  status           StageStatus
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  @@index([jobId, createdAt])
+  @@map("model_invocations")
 }

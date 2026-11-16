@@ -7,6 +7,8 @@ interface UploadResult {
   status?: string;
   error?: unknown;
   image?: { width: number; height: number; mime_type: string; size_bytes: number };
+  decision?: string | null;
+  result?: { nsfw_risk_score: number; domain_mismatch_score: number; confidence: number | null; reasons: unknown; critical_flags: unknown } | null;
 }
 
 export function UploadForm(): React.JSX.Element {
@@ -82,12 +84,24 @@ export function UploadForm(): React.JSX.Element {
             <div><dt>ID</dt><dd>{result.job_id}</dd></div>
             <div><dt>Статус</dt><dd>{result.status}</dd></div>
             {result.image && <div><dt>Размер</dt><dd>{result.image.width} × {result.image.height} · {result.image.mime_type}</dd></div>}
+            {result.decision && <div><dt>Решение</dt><dd>{result.decision}</dd></div>}
+            {result.result && <>
+              <div><dt>Риск NSFW</dt><dd>{result.result.nsfw_risk_score} / 100</dd></div>
+              <div><dt>Несоответствие тематике</dt><dd>{result.result.domain_mismatch_score} / 100</dd></div>
+              <div><dt>Причины</dt><dd>{renderList(result.result.reasons)}</dd></div>
+            </>}
           </dl>
           <button type="button" className="secondary" onClick={refreshStatus}>Обновить статус</button>
         </section>
       )}
     </>
   );
+}
+
+function renderList(value: unknown): string {
+  if (!Array.isArray(value)) return 'Нет дополнительных сведений';
+  const items = value.filter((item): item is string => typeof item === 'string');
+  return items.length > 0 ? items.join(' ') : 'Нет дополнительных сведений';
 }
 
 function errorMessage(error: unknown): string {

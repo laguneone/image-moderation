@@ -1,59 +1,185 @@
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Injectable, Logger, Module, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Job, Worker } from 'bullmq';
-import { WorkerPrismaService } from './worker-prisma.service';
+import { Prisma, StageStatus } from '@moderation/database';
 import { getRedisConnectionOptions, MODERATION_QUEUE_NAME, ModerationQueuePayload } from '@moderation/shared';
+import { MetadataScanner } from './metadata-scanner';
+import { OpenRouterClient, OpenRouterResult } from './openrouter.client';
+import { calculateRisk } from './risk-engine';
+import { WorkerPrismaService } from './worker-prisma.service';
+
+const NEMOTRON_MODEL = process.env.OPENROUTER_NEMOTRON_MODEL ?? 'nvidia/nemotron-3.5-content-safety';
+const QWEN_MODEL = process.env.OPENROUTER_QWEN_MODEL ?? 'qwen/qwen3.6-flash';
+const QWEN_SCHEMA: Record<string, unknown> = {
+  name: 'image_scene_classification', strict: true,
+  schema: { type: 'object', additionalProperties: false, required: ['humans', 'scene', 'objects'], properties: {
+    humans: { type: 'object', additionalProperties: false, required: ['present', 'count', 'categories'], properties: {
+      present: { type: 'boolean' }, count: { type: 'integer', minimum: 0 }, categories: { type: 'array', items: { type: 'string', enum: ['REAL_PERSON', 'PERSON_IN_ARTWORK', 'HUMANOID_CHARACTER', 'ANTHROPOMORPHIC_CHARACTER', 'HUMAN_BODY_PART', 'UNCERTAIN_HUMAN', 'NO_HUMANS'] } },
+    } },
+    scene: { type: 'object', additionalProperties: false, required: ['categories'], properties: { categories: { type: 'array', items: { type: 'string', enum: ['INTERIOR_SCENE', 'FURNITURE', 'WALL_ART', 'DECOR', 'TEXTURE', 'AR_OBJECT', 'OTHER', 'UNKNOWN'] } } } },
+    objects: { type: 'array', items: { type: 'string' } },
+  } },
+};
 
 @Injectable()
 class ModerationWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ModerationWorker.name);
+  private readonly bucket = process.env.MINIO_BUCKET ?? 'moderation-private';
+  private readonly storage = new S3Client({
+    endpoint: `${process.env.MINIO_USE_SSL === 'true' ? 'https' : 'http'}://${process.env.MINIO_ENDPOINT ?? 'minio'}:${process.env.MINIO_PORT ?? '9000'}`,
+    region: 'us-east-1', forcePathStyle: true,
+    credentials: { accessKeyId: process.env.MINIO_ROOT_USER ?? '', secretAccessKey: process.env.MINIO_ROOT_PASSWORD ?? '' },
+  });
   private worker: Worker<ModerationQueuePayload> | undefined;
 
-  constructor(private readonly prisma: WorkerPrismaService) {}
+  constructor(private readonly prisma: WorkerPrismaService, private readonly metadataScanner: MetadataScanner, private readonly openRouter: OpenRouterClient) {}
 
   onModuleInit(): void {
     const parsedConcurrency = Number(process.env.WORKER_CONCURRENCY ?? 4);
     const concurrency = Number.isSafeInteger(parsedConcurrency) && parsedConcurrency > 0 ? parsedConcurrency : 4;
-    this.worker = new Worker<ModerationQueuePayload>(
-      MODERATION_QUEUE_NAME,
-      async (job: Job<ModerationQueuePayload>) => this.acceptJob(job),
-      {
-        connection: getRedisConnectionOptions(process.env.REDIS_URL ?? 'redis://redis:6379'),
-        concurrency,
-      },
-    );
-    this.worker.on('completed', (job) => this.logger.log(`Accepted moderation job ${job.data.moderationJobId}.`));
+    this.worker = new Worker<ModerationQueuePayload>(MODERATION_QUEUE_NAME,
+      async (job: Job<ModerationQueuePayload>) => this.processJob(job),
+      { connection: getRedisConnectionOptions(process.env.REDIS_URL ?? 'redis://redis:6379'), concurrency });
+    this.worker.on('completed', (job) => this.logger.log(`Moderation job ${job.data.moderationJobId} completed.`));
     this.worker.on('failed', (job, error) => {
       this.logger.error(`Queue task failed${job ? ` for ${job.data.moderationJobId}` : ''}: ${error.message}`);
-      if (job && job.attemptsMade >= Number(job.opts.attempts ?? 1)) {
-        void this.markFailed(job.data.moderationJobId);
-      }
+      if (job && job.attemptsMade >= Number(job.opts.attempts ?? 1)) void this.markFailed(job.data.moderationJobId);
     });
     this.worker.on('error', (error) => this.logger.error(`Queue worker error: ${error.message}`));
     this.logger.log(`Moderation queue consumer started with concurrency ${concurrency}.`);
   }
 
-  private async acceptJob(job: Job<ModerationQueuePayload>): Promise<void> {
-    await this.prisma.moderationJob.updateMany({
-      where: { id: job.data.moderationJobId, status: 'QUEUED' },
-      data: { status: 'PROCESSING', startedAt: new Date() },
-    });
+  private async processJob(queueJob: Job<ModerationQueuePayload>): Promise<void> {
+    const job = await this.prisma.moderationJob.findUnique({ where: { id: queueJob.data.moderationJobId }, include: { imageAsset: true } });
+    if (!job || job.status === 'COMPLETED') return;
+    await this.prisma.moderationJob.updateMany({ where: { id: job.id, status: 'QUEUED' }, data: { status: 'PROCESSING', startedAt: new Date(), errorCode: null } });
+    try {
+      const object = await this.storage.send(new GetObjectCommand({ Bucket: this.bucket, Key: job.imageAsset.objectKey }));
+      if (!object.Body) throw new Error('Image object was empty.');
+      const image = Buffer.from(await object.Body.transformToByteArray());
+      if (BigInt(image.length) !== job.imageAsset.sizeBytes) throw new Error('Stored image size does not match its database record.');
+      const metadata = await this.runStage(job.id, 'metadata_analysis', null, () => this.metadataScanner.scan(image, job.imageAsset.originalName));
+      const safety = await this.runModelStage(job.id, 'nsfw_detection', NEMOTRON_MODEL, image, job.imageAsset.mimeType,
+        'Classify the image for explicit nudity, sexual content, sexualized imagery, and other unsafe content. Reply using exactly: Safety: safe|unsafe; Categories: comma-separated labels or none. Do not infer certainty beyond what is visible.');
+      const safetyResult = await this.runStage(job.id, 'nsfw_response_validation', NEMOTRON_MODEL, async () => parseSafety(safety.content));
+      const scene = safetyResult.criticalReview ? null : await (async () => {
+        const sceneCall = await this.runModelStage(job.id, 'people_object_detection', QWEN_MODEL, image, job.imageAsset.mimeType,
+          'Analyze visible people, human-like characters, body parts, interior scene types, and objects. Do not infer age as a fact. Return only the requested JSON.', QWEN_SCHEMA);
+        return this.runStage(job.id, 'people_response_validation', QWEN_MODEL, async () => parseScene(sceneCall.content));
+      })();
+      const risk = calculateRisk({ nsfwUnsafe: safetyResult.unsafe, sexualSignalCount: metadata.suspiciousKeywords.length, peoplePresent: scene?.humans.present ?? false, humanBodyPartPresent: scene?.humans.categories.includes('HUMAN_BODY_PART') ?? false, criticalReview: safetyResult.criticalReview });
+      const payload = { metadata_analysis: metadata, nsfw_detection: { model: NEMOTRON_MODEL, ...safetyResult }, people_object_detection: scene ? { model: QWEN_MODEL, ...scene } : { status: 'SKIPPED_CRITICAL_REVIEW' }, risk };
+      await this.prisma.$transaction(async (tx) => {
+        await tx.moderationResult.create({ data: {
+          jobId: job.id, nsfwRiskScore: risk.nsfwRiskScore, domainMismatchScore: risk.domainMismatchScore,
+          confidence: risk.confidence, decision: risk.decision, criticalFlags: risk.criticalFlags, reasons: risk.reasons, payload: toJsonObject(payload),
+        } });
+        await tx.moderationJob.update({ where: { id: job.id }, data: { status: 'COMPLETED', completedAt: new Date(), errorCode: null } });
+      });
+    } catch (error) {
+      await this.recordStageFailure(job.id, error);
+      throw error;
+    }
+  }
+
+  private async runStage<T>(jobId: string, stageType: string, modelId: string | null, operation: () => Promise<T>): Promise<T> {
+    const startedAt = new Date();
+    const stage = await this.prisma.stageExecution.create({ data: { jobId, stageType, modelId, status: StageStatus.PROCESSING } });
+    try {
+      const result = await operation();
+      await this.prisma.stageExecution.update({ where: { id: stage.id }, data: { completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), normalizedOutput: JSON.parse(JSON.stringify(result)) } });
+      return result;
+    } catch (error) {
+      await this.prisma.stageExecution.update({ where: { id: stage.id }, data: { status: StageStatus.FAILED, completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), error: errorMessage(error).slice(0, 2000) } });
+      throw error;
+    }
+  }
+
+  private async runModelStage(jobId: string, stageType: string, modelId: string, image: Buffer, mimeType: string, prompt: string, schema?: Record<string, unknown>): Promise<OpenRouterResult> {
+    const startedAt = new Date();
+    const stage = await this.prisma.stageExecution.create({ data: { jobId, stageType, modelId, status: StageStatus.PROCESSING } });
+    try {
+      const response = await this.openRouter.analyze(modelId, prompt, image, mimeType, schema);
+      await this.prisma.$transaction([
+        this.prisma.modelInvocation.create({ data: { jobId, stageExecutionId: stage.id, modelId, provider: response.provider, requestId: response.requestId, inputTokens: response.inputTokens, outputTokens: response.outputTokens, costUsd: response.costUsd ?? undefined, latencyMs: response.latencyMs, status: StageStatus.COMPLETED } }),
+        this.prisma.stageExecution.update({ where: { id: stage.id }, data: { completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), normalizedOutput: { content: response.content } } }),
+      ]);
+      return response;
+    } catch (error) {
+      await this.prisma.$transaction([
+        this.prisma.modelInvocation.create({ data: { jobId, stageExecutionId: stage.id, modelId, latencyMs: Date.now() - startedAt.getTime(), status: StageStatus.FAILED } }),
+        this.prisma.stageExecution.update({ where: { id: stage.id }, data: { status: StageStatus.FAILED, completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), error: errorMessage(error).slice(0, 2000) } }),
+      ]);
+      throw error;
+    }
+  }
+
+  private async recordStageFailure(jobId: string, error: unknown): Promise<void> {
+    const attempts = Number(process.env.QUEUE_ATTEMPTS ?? 3);
+    const activeJob = await this.prisma.moderationJob.findUnique({ where: { id: jobId }, select: { status: true } });
+    if (activeJob?.status === 'PROCESSING' && attempts <= 1) await this.markFailed(jobId);
+    this.logger.warn(`Moderation attempt failed for ${jobId}: ${errorMessage(error)}`);
   }
 
   private async markFailed(id: string): Promise<void> {
     try {
-      await this.prisma.moderationJob.updateMany({
-        where: { id, status: { in: ['QUEUED', 'PROCESSING'] } },
-        data: { status: 'FAILED', errorCode: 'QUEUE_PROCESSING_FAILED', completedAt: new Date() },
-      });
+      await this.prisma.moderationJob.updateMany({ where: { id, status: { in: ['QUEUED', 'PROCESSING'] } }, data: { status: 'FAILED', errorCode: 'MODERATION_PROCESSING_FAILED', completedAt: new Date() } });
     } catch (error) {
-      this.logger.error(`Could not persist failure for ${id}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      this.logger.error(`Could not persist failure for ${id}: ${errorMessage(error)}`);
     }
   }
 
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-  }
+  async onModuleDestroy(): Promise<void> { await this.worker?.close(); this.storage.destroy(); }
 }
 
-@Module({ providers: [WorkerPrismaService, ModerationWorker] })
+@Module({ providers: [WorkerPrismaService, MetadataScanner, OpenRouterClient, ModerationWorker] })
 export class WorkerModule {}
+
+export function parseSafety(value: string): { unsafe: boolean; categories: string[]; criticalReview: boolean } {
+  const safety = value.match(/\bsafety\s*:\s*(safe|unsafe)\b/iu);
+  const categories = value.match(/\bcategories\s*:\s*([^\r\n]+)/iu);
+  if (!safety || !categories) throw new Error('Nemotron response did not include valid Safety and Categories labels.');
+  const labels = categories[1].trim().toLowerCase();
+  const categoryList = labels === 'none' ? [] : labels.split(/[,;|]/u).map((category) => category.trim()).filter(Boolean);
+  if (categoryList.length === 0 && labels !== 'none') throw new Error('Nemotron returned an invalid Categories label.');
+  const criticalReview = categoryList.some((category) => /\b(?:csam|child sexual|sexual.{0,20}(?:minor|child)|(?:minor|child).{0,20}sexual|sexual exploitation of children)\b/iu.test(category));
+  return { unsafe: safety[1].toLowerCase() === 'unsafe', categories: categoryList, criticalReview };
+}
+
+export function parseScene(value: string): { humans: { present: boolean; count: number; categories: string[] }; scene: { categories: string[] }; objects: string[] } {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Error('Qwen returned malformed JSON.'); }
+  if (!isRecord(parsed) || !isRecord(parsed.humans) || !isRecord(parsed.scene) || typeof parsed.humans.present !== 'boolean' || !Number.isSafeInteger(parsed.humans.count) || !isStringArray(parsed.humans.categories) || !isStringArray(parsed.scene.categories) || !isStringArray(parsed.objects)) {
+    throw new Error('Qwen response is missing required people or scene fields.');
+  }
+  const count = parsed.humans.count as number;
+  if (count < 0 || (parsed.humans.present && count === 0) || (!parsed.humans.present && count > 0)) throw new Error('Qwen response has inconsistent human count.');
+  const humanCategories = ['REAL_PERSON', 'PERSON_IN_ARTWORK', 'HUMANOID_CHARACTER', 'ANTHROPOMORPHIC_CHARACTER', 'HUMAN_BODY_PART', 'UNCERTAIN_HUMAN', 'NO_HUMANS'];
+  const sceneCategories = ['INTERIOR_SCENE', 'FURNITURE', 'WALL_ART', 'DECOR', 'TEXTURE', 'AR_OBJECT', 'OTHER', 'UNKNOWN'];
+  if (parsed.humans.categories.some((category) => !humanCategories.includes(category)) || parsed.scene.categories.some((category) => !sceneCategories.includes(category)) || parsed.objects.length > 100 || parsed.objects.some((object) => object.length > 200)) {
+    throw new Error('Qwen response contains unsupported or oversized scene labels.');
+  }
+  return parsed as { humans: { present: boolean; count: number; categories: string[] }; scene: { categories: string[] }; objects: string[] };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function isStringArray(value: unknown): value is string[] { return Array.isArray(value) && value.every((item) => typeof item === 'string'); }
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : 'Unknown error'; }
+
+function toJsonObject(value: object): Prisma.InputJsonObject {
+  const result: Record<string, Prisma.InputJsonValue | null> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (item === null || typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') result[key] = item;
+    else if (Array.isArray(item)) result[key] = item.map((entry) => toJsonValue(entry));
+    else if (typeof item === 'object') result[key] = toJsonObject(item);
+    else throw new Error(`Unsupported JSON value for key ${key}.`);
+  }
+  return result;
+}
+
+function toJsonValue(value: unknown): Prisma.InputJsonValue | null {
+  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.map((entry) => toJsonValue(entry));
+  if (typeof value === 'object') return toJsonObject(value);
+  throw new Error('Unsupported value in moderation result JSON.');
+}

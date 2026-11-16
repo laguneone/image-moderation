@@ -1,5 +1,6 @@
 FROM node:20-alpine
 WORKDIR /app
+RUN apk add --no-cache exiftool
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY packages/shared/package.json packages/shared/package.json
