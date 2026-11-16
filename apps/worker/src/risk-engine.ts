@@ -1,4 +1,4 @@
-export interface RiskInput { nsfwUnsafe: boolean; sexualSignalCount: number; peoplePresent: boolean; humanBodyPartPresent: boolean; criticalReview?: boolean; forceReview?: boolean; sexualizedRelationship?: boolean; sexualizedComposition?: boolean; sexualizedContext?: boolean; suspiciousText?: boolean; cropUnsafe?: boolean; arbitratorRestricted?: boolean; confirmedSexualContent?: boolean; fetishContentDetected?: boolean }
+export interface RiskInput { nsfwUnsafe: boolean; sexualSignalCount: number; peoplePresent: boolean; humanBodyPartPresent: boolean; interiorContextPresent?: boolean; criticalReview?: boolean; forceReview?: boolean; sexualizedRelationship?: boolean; sexualizedComposition?: boolean; sexualizedContext?: boolean; suspiciousText?: boolean; cropUnsafe?: boolean; arbitratorRestricted?: boolean; confirmedSexualContent?: boolean; fetishContentDetected?: boolean }
 export interface RiskOutput { nsfwRiskScore: number; domainMismatchScore: number; decision: 'ALLOW' | 'REVIEW' | 'RESTRICT' | 'CRITICAL_REVIEW'; confidence: number | null; criticalFlags: string[]; reasons: string[] }
 export interface RiskConfig { allowMax: number; reviewMax: number; primaryNsfwPoints: number; metadataSignalPoints: number; relationshipPoints: number; compositionPoints: number; contextPoints: number; textPoints: number; cropPoints: number; arbitratorReviewPoints: number; peopleMismatchPoints: number; bodyPartMismatchPoints: number }
 
@@ -14,11 +14,12 @@ export function calculateRisk(input: RiskInput, config: RiskConfig = loadRiskCon
     input.arbitratorRestricted ? config.arbitratorReviewPoints : 0,
   ));
   const domainMismatchScore = Math.min(100, (input.peoplePresent ? config.peopleMismatchPoints : 0) + (input.humanBodyPartPresent ? config.bodyPartMismatchPoints : 0));
-  const decision = input.criticalReview ? 'CRITICAL_REVIEW' : input.confirmedSexualContent || input.fetishContentDetected || nsfwRiskScore > config.reviewMax ? 'RESTRICT' : input.forceReview || nsfwRiskScore > config.allowMax || domainMismatchScore > config.allowMax ? 'REVIEW' : 'ALLOW';
+  const domainNeedsReview = domainMismatchScore > config.allowMax && (!input.interiorContextPresent || input.humanBodyPartPresent);
+  const decision = input.criticalReview ? 'CRITICAL_REVIEW' : input.confirmedSexualContent || input.fetishContentDetected || nsfwRiskScore > config.reviewMax ? 'RESTRICT' : input.forceReview || nsfwRiskScore > config.allowMax || domainNeedsReview ? 'REVIEW' : 'ALLOW';
   const reasons = [
-    ...(input.nsfwUnsafe ? ['Первичная проверка Nemotron выявила небезопасное содержимое.'] : []),
+    ...(input.nsfwUnsafe ? ['Первичная проверка Nemotron подала сигнал о небезопасном содержимом; требуется дополнительная оценка.'] : []),
     ...(input.sexualSignalCount > 0 && !input.nsfwUnsafe ? ['В метаданных или имени файла обнаружены подозрительные термины.'] : []),
-    ...(input.peoplePresent ? ['Обнаружены люди или человекоподобные объекты; требуется проверка соответствия тематике интерьера.'] : []),
+    ...(input.peoplePresent ? ['Обнаружены люди или человекоподобные объекты; сигнал влияет на доменное соответствие.'] : []),
     ...(input.humanBodyPartPresent ? ['Обнаружены отдельные части тела; требуется дополнительная проверка.'] : []),
     ...(input.sexualizedRelationship ? ['Relationship Engine обнаружил сексуализированное взаимодействие по структурированным признакам.'] : []),
     ...(input.sexualizedComposition ? ['Анализ композиции выявил сексуализированный визуальный акцент.'] : []),
@@ -38,7 +39,7 @@ export function loadRiskConfig(env: NodeJS.ProcessEnv = process.env): RiskConfig
   const config = {
     allowMax: fromEnv(env.RISK_ALLOW_MAX, 29),
     reviewMax: fromEnv(env.RISK_REVIEW_MAX, 69),
-    primaryNsfwPoints: fromEnv(env.RISK_PRIMARY_NSFW_POINTS, 70),
+    primaryNsfwPoints: fromEnv(env.RISK_PRIMARY_NSFW_POINTS, 50),
     metadataSignalPoints: fromEnv(env.RISK_METADATA_SIGNAL_POINTS, 30),
     relationshipPoints: fromEnv(env.RISK_RELATIONSHIP_POINTS, 65),
     compositionPoints: fromEnv(env.RISK_COMPOSITION_POINTS, 40),

@@ -104,6 +104,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
       const riskInput = {
         nsfwUnsafe: safetyResult.unsafe, sexualSignalCount: metadata.suspiciousKeywords.length,
         peoplePresent: scene?.humans.present ?? false, humanBodyPartPresent: scene?.humans.categories.includes('HUMAN_BODY_PART') ?? false,
+        interiorContextPresent: scene?.scene.categories.includes('INTERIOR_SCENE') === true && scene.scene.categories.includes('FURNITURE'),
         criticalReview: safetyResult.criticalReview,
         sexualizedRelationship: deep?.relationships?.sexualized_interaction,
         sexualizedComposition: deep?.composition?.sexualized_focus,

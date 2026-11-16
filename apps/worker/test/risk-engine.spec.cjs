@@ -2,17 +2,22 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { calculateRisk } = require('../dist/risk-engine.js');
 
-test('safe interior can be allowed while human presence only raises domain mismatch', () => {
-  const result = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 0, peoplePresent: true, humanBodyPartPresent: false });
+test('a person in a clearly identified furnished interior does not trigger manual review on its own', () => {
+  const result = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 0, peoplePresent: true, humanBodyPartPresent: false, interiorContextPresent: true });
   assert.equal(result.nsfwRiskScore, 0);
   assert.equal(result.domainMismatchScore, 35);
+  assert.equal(result.decision, 'ALLOW');
+});
+
+test('a person without a recognized interior still triggers a domain review', () => {
+  const result = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 0, peoplePresent: true, humanBodyPartPresent: false });
   assert.equal(result.decision, 'REVIEW');
 });
 
-test('unsafe primary model result restricts the image', () => {
+test('an uncorroborated unsafe primary result requires review instead of restriction', () => {
   const result = calculateRisk({ nsfwUnsafe: true, sexualSignalCount: 0, peoplePresent: false, humanBodyPartPresent: false });
-  assert.equal(result.nsfwRiskScore, 70);
-  assert.equal(result.decision, 'RESTRICT');
+  assert.equal(result.nsfwRiskScore, 50);
+  assert.equal(result.decision, 'REVIEW');
 });
 
 test('suspicious metadata is review evidence and absence does not increase risk', () => {
