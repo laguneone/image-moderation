@@ -85,6 +85,10 @@ button:disabled { cursor: wait; opacity: .65; }
 .decision-allow, .decision-approved { border-color: #235d46; color: #7fe0b7; }
 .decision-review, .decision-critical_review { border-color: #81662e; color: #e9c677; }
 .decision-restrict, .decision-rejected { border-color: #74383b; color: #f09a9c; }
+.decision-queued { border-color: #45566b; color: #a9bdd4; }
+.decision-processing { border-color: #416b87; color: #8ed0f4; }
+.decision-completed { border-color: #235d46; color: #7fe0b7; }
+.decision-failed { border-color: #74383b; color: #f09a9c; }
 .admin-filter { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; max-width: 1440px; margin: auto; padding: 17px; border: 1px solid var(--admin-line); border-radius: 12px; background: var(--admin-panel); }
 .admin-filter label, .admin-form label { display: grid; gap: 7px; color: var(--admin-muted); font-size: 12px; }
 .admin-filter input, .admin-filter select, .admin-form input, .admin-form select, .admin-form textarea { min-width: 190px; min-height: 40px; padding: 9px 11px; border: 1px solid var(--admin-line); border-radius: 7px; background: #0c1116; color: var(--admin-text); font: inherit; }

@@ -69,6 +69,7 @@ services:
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}
       OPENROUTER_NEMOTRON_MODEL: ${OPENROUTER_NEMOTRON_MODEL:-nvidia/nemotron-3.5-content-safety}
       OPENROUTER_QWEN_MODEL: ${OPENROUTER_QWEN_MODEL:-qwen/qwen3.6-flash}
+      OPENROUTER_QWEN_FALLBACK_MODEL: ${OPENROUTER_QWEN_FALLBACK_MODEL:-google/gemini-3-flash-preview}
       OPENROUTER_GEMINI_MODEL: ${OPENROUTER_GEMINI_MODEL:-google/gemini-3-flash-preview}
       OPENROUTER_ARBITER_MODEL: ${OPENROUTER_ARBITER_MODEL:-openai/gpt-4.1-mini}
       OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-http://localhost:3000}

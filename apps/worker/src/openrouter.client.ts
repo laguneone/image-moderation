@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 export interface OpenRouterResult {
   content: string;
+  modelId: string | null;
   requestId: string | null;
   provider: string | null;
   inputTokens: number | null;
@@ -64,6 +65,7 @@ export class OpenRouterClient {
     const usage = typeof data.usage === 'object' && data.usage !== null ? data.usage as Record<string, unknown> : {};
     return {
       content: outputText,
+      modelId: typeof data.model === 'string' ? data.model : null,
       requestId: typeof data.id === 'string' ? data.id : null,
       provider: typeof data.provider === 'string' ? data.provider : null,
       inputTokens: finiteInteger(usage.prompt_tokens),
@@ -88,7 +90,7 @@ export class OpenRouterClient {
     const content = model === 'nvidia/nemotron-3.5-content-safety'
       ? 'Safety: safe\nCategories: none'
       : marker && answers[marker] ? JSON.stringify(answers[marker]) : JSON.stringify(answers.initial_scene);
-    return { content, requestId: 'explicit-test-mode', provider: 'test', inputTokens: null, outputTokens: null, costUsd: null, latencyMs: 0 };
+    return { content, modelId: model, requestId: 'explicit-test-mode', provider: 'test', inputTokens: null, outputTokens: null, costUsd: null, latencyMs: 0 };
   }
 }
 
@@ -110,8 +112,13 @@ function finiteInteger(value: unknown): number | null {
 function safeError(value: unknown): string {
   if (typeof value !== 'object' || value === null) return 'invalid error body';
   const error = (value as Record<string, unknown>).error;
-  if (typeof error === 'object' && error !== null && typeof (error as Record<string, unknown>).message === 'string') {
-    return ((error as Record<string, unknown>).message as string).slice(0, 300);
+  if (typeof error === 'object' && error !== null) {
+    const details = error as Record<string, unknown>;
+    const message = typeof details.message === 'string' ? details.message : 'provider error';
+    const code = typeof details.code === 'string' || typeof details.code === 'number' ? ` [${details.code}]` : '';
+    const metadata = typeof details.metadata === 'object' && details.metadata !== null ? details.metadata as Record<string, unknown> : {};
+    const providerMessage = typeof metadata.raw === 'string' ? metadata.raw : typeof metadata.message === 'string' ? metadata.message : null;
+    return `${message}${code}${providerMessage ? `; provider: ${providerMessage}` : ''}`.replace(/\s+/gu, ' ').slice(0, 700);
   }
   return 'provider error';
 }

@@ -18,8 +18,8 @@ export class WorkerConfigurationService {
 
   async model(key: string, fallbackModelId: string): Promise<ActiveModel> {
     const config = await this.prisma.modelConfiguration.findFirst({ where: { key, status: ConfigStatus.ACTIVE }, orderBy: { version: 'desc' } });
-    if (!config) return { modelId: fallbackModelId, timeoutMs: 90_000, maxTokens: null, fallbackModelId: null, generationParams: {} };
-    return { modelId: config.openRouterModelId, timeoutMs: config.timeoutMs, maxTokens: config.maxTokens, fallbackModelId: config.fallbackModelId, generationParams: isRecord(config.generationParams) ? config.generationParams : {} };
+    if (!config) return { modelId: fallbackModelId, timeoutMs: 90_000, maxTokens: null, fallbackModelId: qwenFallbackFor(fallbackModelId), generationParams: {} };
+    return { modelId: config.openRouterModelId, timeoutMs: config.timeoutMs, maxTokens: config.maxTokens, fallbackModelId: config.fallbackModelId ?? qwenFallbackFor(config.openRouterModelId), generationParams: isRecord(config.generationParams) ? config.generationParams : {} };
   }
 
   async prompt(key: string, fallback: string): Promise<{ content: string; id: string | undefined }> {
@@ -46,3 +46,7 @@ export class WorkerConfigurationService {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function qwenFallbackFor(modelId: string): string | null {
+  const fallback = process.env.OPENROUTER_QWEN_FALLBACK_MODEL?.trim();
+  return modelId.startsWith('qwen/') && fallback && fallback !== modelId ? fallback : null;
+}

@@ -41,22 +41,36 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
     const concurrency = Number.isSafeInteger(parsedConcurrency) && parsedConcurrency > 0 ? parsedConcurrency : 4;
     this.worker = new Worker<ModerationQueuePayload>(MODERATION_QUEUE_NAME,
       async (job: Job<ModerationQueuePayload>) => this.processJob(job),
-      { connection: getRedisConnectionOptions(process.env.REDIS_URL ?? 'redis://redis:6379'), concurrency });
+      { connection: getRedisConnectionOptions(process.env.REDIS_URL ?? 'redis://redis:6379'), concurrency,
+        maxStalledCount: positiveIntegerFromEnv('QUEUE_MAX_STALLED_COUNT', 2),
+        stalledInterval: positiveIntegerFromEnv('QUEUE_STALLED_INTERVAL_MS', 30_000) });
+    this.worker.on('active', (job) => this.logger.log(`Moderation job ${job.data.moderationJobId} is being processed (attempt ${job.attemptsMade + 1}).`));
     this.worker.on('completed', (job) => this.logger.log(`Moderation job ${job.data.moderationJobId} completed.`));
     this.worker.on('failed', (job, error) => {
-      this.logger.error(`Queue task failed${job ? ` for ${job.data.moderationJobId}` : ''}: ${error.message}`);
-      if (job && job.attemptsMade >= Number(job.opts.attempts ?? 1)) void this.markFailed(job.data.moderationJobId);
+      if (!job) {
+        this.logger.error(`Queue task failed without job details: ${errorMessage(error)}`);
+        return;
+      }
+      const isFinalAttempt = job.attemptsMade >= Number(job.opts.attempts ?? 1);
+      const message = `Queue task ${isFinalAttempt ? 'failed permanently' : 'will retry'} for ${job.data.moderationJobId} (attempt ${job.attemptsMade}/${job.opts.attempts ?? 1}): ${errorMessage(error)}`;
+      if (isFinalAttempt) {
+        this.logger.error(message);
+        void this.markFailed(job.data.moderationJobId).catch((failure: unknown) => this.logger.error(`Could not mark ${job.data.moderationJobId} failed: ${errorMessage(failure)}`));
+      } else this.logger.warn(message);
     });
     this.worker.on('error', (error) => this.logger.error(`Queue worker error: ${error.message}`));
+    this.worker.on('stalled', (jobId) => this.logger.warn(`Queue job ${jobId} stalled; BullMQ will recover it.`));
+    this.worker.on('ready', () => this.logger.log('Moderation queue worker is ready.'));
+    this.worker.on('closed', () => this.logger.warn('Moderation queue worker closed.'));
     this.logger.log(`Moderation queue consumer started with concurrency ${concurrency}.`);
   }
 
   private async processJob(queueJob: Job<ModerationQueuePayload>): Promise<void> {
     const job = await this.prisma.moderationJob.findUnique({ where: { id: queueJob.data.moderationJobId }, include: { imageAsset: true } });
     if (!job || job.status === 'COMPLETED') return;
-    const pipeline = await this.config.pinPipeline(job.id, job.pipeline, job.pipelineVersionId);
-    await this.prisma.moderationJob.updateMany({ where: { id: job.id, status: 'QUEUED' }, data: { status: 'PROCESSING', startedAt: new Date(), errorCode: null } });
     try {
+      await this.prisma.moderationJob.updateMany({ where: { id: job.id, status: { in: ['QUEUED', 'PROCESSING'] } }, data: { status: 'PROCESSING', startedAt: new Date(queueJob.processedOn ?? Date.now()), completedAt: null, errorCode: null } });
+      const pipeline = await this.config.pinPipeline(job.id, job.pipeline, job.pipelineVersionId);
       const object = await this.storage.send(new GetObjectCommand({ Bucket: this.bucket, Key: job.imageAsset.objectKey }));
       if (!object.Body) throw new Error('Image object was empty.');
       const image = Buffer.from(await object.Body.transformToByteArray());
@@ -119,7 +133,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
     const stage = await this.prisma.stageExecution.create({ data: { jobId, stageType, modelId, status: StageStatus.PROCESSING } });
     try {
       const result = await operation();
-      await this.prisma.stageExecution.update({ where: { id: stage.id }, data: { completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), normalizedOutput: JSON.parse(JSON.stringify(result)) } });
+      await this.prisma.stageExecution.update({ where: { id: stage.id }, data: { status: StageStatus.COMPLETED, completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), normalizedOutput: JSON.parse(JSON.stringify(result)) } });
       return result;
     } catch (error) {
       await this.prisma.stageExecution.update({ where: { id: stage.id }, data: { status: StageStatus.FAILED, completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), error: errorMessage(error).slice(0, 2000) } });
@@ -133,9 +147,10 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
     const stage = await this.prisma.stageExecution.create({ data: { jobId, stageType, modelId, promptVersionId, status: StageStatus.PROCESSING } });
     try {
       const response = await this.openRouter.analyze(modelId, prompt, image, mimeType, schema, model);
+      const resolvedModelId = response.modelId ?? modelId;
       await this.prisma.$transaction([
-        this.prisma.modelInvocation.create({ data: { jobId, stageExecutionId: stage.id, modelId, provider: response.provider, requestId: response.requestId, inputTokens: response.inputTokens, outputTokens: response.outputTokens, costUsd: response.costUsd ?? undefined, latencyMs: response.latencyMs, status: StageStatus.COMPLETED } }),
-        this.prisma.stageExecution.update({ where: { id: stage.id }, data: { completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), normalizedOutput: { content: response.content } } }),
+        this.prisma.modelInvocation.create({ data: { jobId, stageExecutionId: stage.id, modelId: resolvedModelId, provider: response.provider, requestId: response.requestId, inputTokens: response.inputTokens, outputTokens: response.outputTokens, costUsd: response.costUsd ?? undefined, latencyMs: response.latencyMs, status: StageStatus.COMPLETED } }),
+        this.prisma.stageExecution.update({ where: { id: stage.id }, data: { modelId: resolvedModelId, status: StageStatus.COMPLETED, completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), normalizedOutput: { content: response.content } } }),
       ]);
       return response;
     } catch (error) {
@@ -148,9 +163,6 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async recordStageFailure(jobId: string, error: unknown): Promise<void> {
-    const attempts = Number(process.env.QUEUE_ATTEMPTS ?? 3);
-    const activeJob = await this.prisma.moderationJob.findUnique({ where: { id: jobId }, select: { status: true } });
-    if (activeJob?.status === 'PROCESSING' && attempts <= 1) await this.markFailed(jobId);
     this.logger.warn(`Moderation attempt failed for ${jobId}: ${errorMessage(error)}`);
   }
 
@@ -163,6 +175,11 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> { await this.worker?.close(); this.storage.destroy(); }
+}
+
+function positiveIntegerFromEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 @Module({ providers: [WorkerPrismaService, MetadataScanner, OpenRouterClient, WorkerConfigurationService, DeepAnalyzer, ModerationWorker] })

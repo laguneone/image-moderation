@@ -33,7 +33,11 @@ export function AdminOverview({ role }: { role: 'ADMIN' | 'SPECIALIST' }): React
     finally { setBusy(false); }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   return <main className="admin-shell">
     <header className="admin-header"><div><p className="admin-eyebrow">NSFW Filter</p><h1>Панель модерации</h1></div><span>Локальный доступ · полный доступ</span></header>
@@ -58,13 +62,18 @@ export function AdminOverview({ role }: { role: 'ADMIN' | 'SPECIALIST' }): React
 
 export function JobTable({ jobs, role = 'ADMIN' }: { jobs: JobRow[]; role?: 'ADMIN' | 'SPECIALIST' }): React.JSX.Element {
   if (jobs.length === 0) return <p className="admin-muted">Пока нет проверок.</p>;
-  return <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Фото</th><th>ID</th><th>Приложение</th><th>Тип</th><th>NSFW</th><th>Тема</th><th>Решение</th><th>Pipeline</th><th>Стоимость</th><th>Время</th></tr></thead><tbody>
-    {jobs.map((job) => <tr key={job.job_id}><td>{job.preview_allowed || role === 'SPECIALIST' ? <Link href={`/admin/moderations/${encodeURIComponent(job.job_id)}`}><img className="admin-thumb" src={`/api/admin/moderations/${encodeURIComponent(job.job_id)}/image`} alt="Предпросмотр" /></Link> : 'ограничен'}</td><td><Link href={`/admin/moderations/${encodeURIComponent(job.job_id)}`}>{job.job_id.slice(0, 12)}</Link></td><td>{job.application_id}</td><td>{job.mime_type}</td><td>{job.nsfw_risk_score ?? '—'}</td><td>{job.domain_mismatch_score ?? '—'}</td><td><Decision value={job.decision} /></td><td>{job.pipeline}</td><td>{job.ai_cost_usd > 0 ? `$${job.ai_cost_usd.toFixed(4)}` : '—'}</td><td>{new Date(job.created_at).toLocaleString('ru-RU')}</td></tr>)}
+  return <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Фото</th><th>ID</th><th>Приложение</th><th>Тип</th><th>Статус</th><th>NSFW</th><th>Тема</th><th>Решение</th><th>Pipeline</th><th>Стоимость</th><th>Время</th></tr></thead><tbody>
+    {jobs.map((job) => <tr key={job.job_id}><td>{job.preview_allowed || role === 'SPECIALIST' ? <Link href={`/admin/moderations/${encodeURIComponent(job.job_id)}`}><img className="admin-thumb" src={`/api/admin/moderations/${encodeURIComponent(job.job_id)}/image`} alt="Предпросмотр" /></Link> : 'ограничен'}</td><td><Link href={`/admin/moderations/${encodeURIComponent(job.job_id)}`}>{job.job_id.slice(0, 12)}</Link></td><td>{job.application_id}</td><td>{job.mime_type}</td><td><JobStatus value={job.status} /></td><td>{job.nsfw_risk_score ?? '—'}</td><td>{job.domain_mismatch_score ?? '—'}</td><td><Decision value={job.decision} /></td><td>{job.pipeline}</td><td>{job.ai_cost_usd > 0 ? `$${job.ai_cost_usd.toFixed(4)}` : '—'}</td><td>{new Date(job.created_at).toLocaleString('ru-RU')}</td></tr>)}
   </tbody></table></div>;
 }
 
 function Metric({ label, value }: { label: string; value: string | number }): React.JSX.Element { return <article className="admin-metric"><span>{label}</span><strong>{value}</strong></article>; }
-export function Decision({ value }: { value: string | null }): React.JSX.Element { return <span className={`admin-decision decision-${(value ?? 'pending').toLowerCase()}`}>{value ?? 'В очереди'}</span>; }
+export function Decision({ value }: { value: string | null }): React.JSX.Element { return <span className={`admin-decision decision-${(value ?? 'pending').toLowerCase()}`}>{value ?? 'Ожидает результата'}</span>; }
+export function JobStatus({ value }: { value: string }): React.JSX.Element {
+  const labels: Record<string, string> = { queued: 'В очереди', processing: 'Обработка', completed: 'Завершено', failed: 'Ошибка' };
+  const label = labels[value.toLowerCase()] ?? value;
+  return <span className={`admin-decision decision-${value.toLowerCase()}`}>{label}</span>;
+}
 function isDashboard(value: unknown): value is Dashboard { return isRecord(value) && typeof value.total === 'number' && typeof value.completed === 'number' && isRecord(value.queue); }
 function isJobList(value: unknown): value is { items: JobRow[] } { return isRecord(value) && Array.isArray(value.items); }
 function readError(value: unknown): string { return isRecord(value) && typeof value.message === 'string' ? value.message : isRecord(value) && typeof value.error === 'string' ? value.error : 'Не удалось загрузить данные.'; }

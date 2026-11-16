@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 
 interface UploadResult {
   job_id?: string;
@@ -59,6 +59,21 @@ export function UploadForm(): React.JSX.Element {
     }
   }
 
+  useEffect(() => {
+    const jobId = result?.job_id;
+    if (!jobId || !['queued', 'processing'].includes(result?.status?.toLowerCase() ?? '')) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/moderations?id=${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+        const body = (await response.json()) as UploadResult;
+        if (response.ok) setResult((current) => current?.job_id === jobId ? body : current);
+      } catch {
+        // Keep the current state visible and retry at the next interval.
+      }
+    }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [result?.job_id, result?.status]);
+
   return (
     <>
       <form className="upload-form" onSubmit={submit}>
@@ -82,7 +97,7 @@ export function UploadForm(): React.JSX.Element {
           <h2>Задача создана</h2>
           <dl>
             <div><dt>ID</dt><dd>{result.job_id}</dd></div>
-            <div><dt>Статус</dt><dd>{result.status}</dd></div>
+            <div><dt>Статус</dt><dd>{statusLabel(result.status)}</dd></div>
             {result.image && <div><dt>Размер</dt><dd>{result.image.width} × {result.image.height} · {result.image.mime_type}</dd></div>}
             {result.decision && <div><dt>Решение</dt><dd>{result.decision}</dd></div>}
             {result.result && <>
@@ -112,4 +127,9 @@ function errorMessage(error: unknown): string {
     if (Array.isArray(value) && value.every((item) => typeof item === 'string')) return value.join(' ');
   }
   return 'Не удалось загрузить изображение.';
+}
+
+function statusLabel(status: string | undefined): string {
+  const labels: Record<string, string> = { queued: 'В очереди', processing: 'Обработка', completed: 'Завершено', failed: 'Ошибка' };
+  return status ? labels[status.toLowerCase()] ?? status : 'Неизвестно';
 }

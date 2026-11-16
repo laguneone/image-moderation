@@ -117,9 +117,10 @@ export class DeepAnalyzer {
     let response: OpenRouterResult | null = null;
     try {
       response = await operation();
+      const resolvedModelId = response.modelId ?? modelId;
       await this.prisma.$transaction([
-        this.prisma.modelInvocation.create({ data: { jobId, stageExecutionId: stage.id, modelId, provider: response.provider, requestId: response.requestId, inputTokens: response.inputTokens, outputTokens: response.outputTokens, costUsd: response.costUsd ?? undefined, latencyMs: response.latencyMs, status: StageStatus.COMPLETED } }),
-        this.prisma.stageExecution.update({ where: { id: stage.id }, data: { status: StageStatus.COMPLETED, completedAt: new Date(), durationMs: Date.now() - startedAt, normalizedOutput: { content: response.content } } }),
+        this.prisma.modelInvocation.create({ data: { jobId, stageExecutionId: stage.id, modelId: resolvedModelId, provider: response.provider, requestId: response.requestId, inputTokens: response.inputTokens, outputTokens: response.outputTokens, costUsd: response.costUsd ?? undefined, latencyMs: response.latencyMs, status: StageStatus.COMPLETED } }),
+        this.prisma.stageExecution.update({ where: { id: stage.id }, data: { modelId: resolvedModelId, status: StageStatus.COMPLETED, completedAt: new Date(), durationMs: Date.now() - startedAt, normalizedOutput: { content: response.content } } }),
       ]);
       return response;
     } catch (error) {

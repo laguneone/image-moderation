@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { FormEvent, useEffect, useState } from 'react';
-import { Decision } from '../../overview';
+import { Decision, JobStatus } from '../../overview';
 
 interface Detail {
   job_id: string; status: string; application_id: string; pipeline: string; created_at: string; effective_decision: string | null;
@@ -33,7 +33,13 @@ export function ModerationDetail({ id, userId, role }: { id: string; userId: str
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось загрузить карточку.'); }
   }
 
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => {
+    void load();
+    const isActive = !detail || ['queued', 'processing'].includes(detail.status.toLowerCase());
+    if (!isActive) return;
+    const timer = window.setInterval(() => { void load(); }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [id, detail?.status]);
 
   async function claim(): Promise<void> {
     setBusy(true); setError(null);
@@ -67,7 +73,7 @@ export function ModerationDetail({ id, userId, role }: { id: string; userId: str
         <article className="admin-panel admin-image-panel"><img src={`/api/admin/moderations/${encodeURIComponent(id)}/image`} alt="Проверяемое изображение" />
           <dl className="admin-facts"><Fact label="Формат" value={detail.image.mime_type} /><Fact label="Размер" value={`${detail.image.width} × ${detail.image.height} · ${formatBytes(detail.image.size_bytes)}`} /><Fact label="SHA-256" value={detail.image.sha256} /></dl>
         </article>
-        <article className="admin-panel"><p className="admin-eyebrow">Решение</p><div className="admin-score-heading"><h2><Decision value={detail.effective_decision ?? detail.result?.decision ?? null} /></h2><span>{detail.status}</span></div>
+        <article className="admin-panel"><p className="admin-eyebrow">Статус задачи</p><div className="admin-score-heading"><h2><JobStatus value={detail.status} /></h2><span>Решение: <Decision value={detail.effective_decision ?? detail.result?.decision ?? null} /></span></div>
           {detail.result && <div className="admin-score-grid"><Fact label="NSFW Risk" value={`${detail.result.nsfw_risk_score} / 100`} /><Fact label="Domain Mismatch" value={`${detail.result.domain_mismatch_score} / 100`} /><Fact label="Уверенность" value={detail.result.confidence === null ? 'не указана' : String(detail.result.confidence)} /></div>}
           <Fact label="Приложение" value={detail.application_id} /><Fact label="Pipeline" value={detail.pipeline} /><Fact label="Создано" value={new Date(detail.created_at).toLocaleString('ru-RU')} />
           <h3>Причины</h3><p>{detail.result ? listText(detail.result.reasons) : 'Результат ещё не готов.'}</p>
