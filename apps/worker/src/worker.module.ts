@@ -12,6 +12,7 @@ import { ActiveModel, WorkerConfigurationService } from './worker-configuration.
 
 const NEMOTRON_MODEL = process.env.OPENROUTER_NEMOTRON_MODEL ?? 'nvidia/nemotron-3.5-content-safety';
 const QWEN_MODEL = process.env.OPENROUTER_QWEN_MODEL ?? 'qwen/qwen3.6-flash';
+const QWEN_SCENE_PROMPT = '[stage:initial_scene] Analyze visible people, human-like characters (including anime and other illustrated characters), body parts, interior scene types, and objects. Treat an identified humanoid, anthropomorphic, or illustrated person as present and include it in the count. Use NO_HUMANS only when no person-like character or human body part is visible. Do not infer age as a fact. Return only the requested JSON.';
 const QWEN_SCHEMA: Record<string, unknown> = {
   name: 'image_scene_classification', strict: true,
   schema: { type: 'object', additionalProperties: false, required: ['humans', 'scene', 'objects'], properties: {
@@ -85,7 +86,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
       if (!safetyResult.criticalReview) {
         const sceneModel = await this.config.model('initial_scene', QWEN_MODEL);
         sceneModelId = sceneModel.modelId;
-        const scenePrompt = await this.config.prompt('initial_scene', '[stage:initial_scene] Analyze visible people, human-like characters, body parts, interior scene types, and objects. Do not infer age as a fact. Return only the requested JSON.');
+        const scenePrompt = await this.config.prompt('initial_scene', QWEN_SCENE_PROMPT);
         const sceneCall = await this.runModelStage(job.id, 'people_object_detection', sceneModel, scenePrompt.content, scenePrompt.id, image, job.imageAsset.mimeType, QWEN_SCHEMA);
         scene = await this.runStage(job.id, 'people_response_validation', sceneModel.modelId, async () => parseScene(sceneCall.content));
       }
@@ -210,12 +211,17 @@ export function parseScene(value: string): { humans: { present: boolean; count: 
   }
   const count = parsed.humans.count as number;
   if (count < 0) throw new Error('Qwen response has an invalid human count.');
-  if (count > 0) parsed.humans.present = true;
   const humanCategories = ['REAL_PERSON', 'PERSON_IN_ARTWORK', 'HUMANOID_CHARACTER', 'ANTHROPOMORPHIC_CHARACTER', 'HUMAN_BODY_PART', 'UNCERTAIN_HUMAN', 'NO_HUMANS'];
   const sceneCategories = ['INTERIOR_SCENE', 'FURNITURE', 'WALL_ART', 'DECOR', 'TEXTURE', 'AR_OBJECT', 'OTHER', 'UNKNOWN'];
   if (parsed.humans.categories.some((category) => !humanCategories.includes(category)) || parsed.scene.categories.some((category) => !sceneCategories.includes(category)) || parsed.objects.length > 100 || parsed.objects.some((object) => object.length > 200)) {
     throw new Error('Qwen response contains unsupported or oversized scene labels.');
   }
+  const personCategories = ['REAL_PERSON', 'PERSON_IN_ARTWORK', 'HUMANOID_CHARACTER', 'ANTHROPOMORPHIC_CHARACTER', 'UNCERTAIN_HUMAN'];
+  const hasPersonCategory = parsed.humans.categories.some((category) => personCategories.includes(category));
+  const present = parsed.humans.present || count > 0 || hasPersonCategory;
+  parsed.humans.present = present;
+  parsed.humans.count = Math.max(count, present ? 1 : 0);
+  if (present) parsed.humans.categories = parsed.humans.categories.filter((category) => category !== 'NO_HUMANS');
   return parsed as { humans: { present: boolean; count: number; categories: string[] }; scene: { categories: string[] }; objects: string[] };
 }
 

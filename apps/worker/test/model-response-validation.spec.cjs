@@ -22,7 +22,15 @@ test('Qwen output must have consistent counts and supported categories', () => {
   assert.deepEqual(parseScene(JSON.stringify(valid)), valid);
   assert.deepEqual(parseScene(JSON.stringify([valid])), valid);
   assert.throws(() => parseScene(JSON.stringify([valid, valid])), /missing required/);
-  assert.equal(parseScene(JSON.stringify({ ...valid, humans: { present: false, count: 1, categories: ['REAL_PERSON'] } })).humans.present, true);
-  assert.equal(parseScene(JSON.stringify({ ...valid, humans: { present: true, count: 0, categories: ['REAL_PERSON'] } })).humans.present, true);
+  const countSaysPerson = parseScene(JSON.stringify({ ...valid, humans: { present: false, count: 1, categories: ['REAL_PERSON'] } }));
+  assert.equal(countSaysPerson.humans.present, true);
+  assert.equal(countSaysPerson.humans.count, 1);
+  const categorySaysPerson = parseScene(JSON.stringify({ ...valid, humans: { present: false, count: 0, categories: ['HUMANOID_CHARACTER'] } }));
+  assert.equal(categorySaysPerson.humans.present, true);
+  assert.equal(categorySaysPerson.humans.count, 1);
+  const trueWithoutCount = parseScene(JSON.stringify({ ...valid, humans: { present: true, count: 0, categories: ['REAL_PERSON'] } }));
+  assert.equal(trueWithoutCount.humans.present, true);
+  assert.equal(trueWithoutCount.humans.count, 1);
+  assert.deepEqual(parseScene(JSON.stringify({ ...valid, humans: { present: false, count: 1, categories: ['NO_HUMANS'] } })).humans.categories, []);
   assert.throws(() => parseScene(JSON.stringify({ ...valid, scene: { categories: ['UNKNOWN_SCENE'] } })), /unsupported/);
 });
