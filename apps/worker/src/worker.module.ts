@@ -114,6 +114,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
           && deep.composition?.sexualized_focus === true
           && deep.context?.sexual_context === true
           && deep.arbitration?.recommendation === 'RESTRICT',
+        fetishContentDetected: deep?.context?.fetish_content === true,
       };
       const preliminaryRisk = calculateRisk(riskInput);
       const finalRuleOutcome = evaluateRules(rules, { nsfwUnsafe: safetyResult.unsafe, peoplePresent: scene?.humans.present ?? false, criticalReview: safetyResult.criticalReview, suspiciousText: deep?.ocr?.suspicious_text ?? false, sexualizedContext: deep?.context?.sexual_context ?? false, sexualizedInteraction: deep?.relationships?.sexualized_interaction ?? false, nsfwRiskScore: preliminaryRisk.nsfwRiskScore, domainMismatchScore: preliminaryRisk.domainMismatchScore, sexualSignalCount: metadata.suspiciousKeywords.length, confidence: preliminaryRisk.confidence }, job.applicationId);

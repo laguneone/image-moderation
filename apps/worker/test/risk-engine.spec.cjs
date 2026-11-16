@@ -58,3 +58,16 @@ test('one crop or an arbitrator recommendation alone does not bypass the ordinar
   });
   assert.equal(result.decision, 'REVIEW');
 });
+
+test('fetish-related content is restricted without assuming age', () => {
+  const result = calculateRisk({
+    nsfwUnsafe: false,
+    sexualSignalCount: 0,
+    peoplePresent: false,
+    humanBodyPartPresent: false,
+    fetishContentDetected: true,
+  });
+  assert.equal(result.nsfwRiskScore, 0);
+  assert.equal(result.decision, 'RESTRICT');
+  assert.ok(result.reasons.some((reason) => reason.includes('фетиш')));
+});

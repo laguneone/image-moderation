@@ -82,7 +82,7 @@ export class OpenRouterClient {
       scene_decomposition: { scene_type: 'INTERIOR_SCENE', foreground: [], midground: [], background: [], persons: [], objects: [], artwork: [], text_regions: [], uncertainties: [] },
       relationships: { relations: [], sexualized_interaction: false, evidence: [] },
       composition: { visual_focus: 'interior objects', unusual_cropping: false, sexualized_focus: false, evidence: [] },
-      context: { classification: 'NON_SEXUAL', explanation: 'Ordinary interior scene.', sexual_context: false },
+      context: { classification: 'NON_SEXUAL', explanation: 'Ordinary interior scene.', sexual_context: false, fetish_content: false },
       crops: { regions: [] },
       ocr: { text_regions: [], suspicious_text: false },
       arbitration: { recommendation: 'ALLOW', unresolved_questions: [], evidence: [] },
