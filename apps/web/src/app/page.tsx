@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import Link from 'next/link';
 import { UploadForm } from './upload-form';
 
 export default function HomePage(): ReactElement {
@@ -7,9 +8,9 @@ export default function HomePage(): ReactElement {
       <section className="panel">
         <p className="eyebrow">Image Moderation · локальный MVP</p>
         <h1>Проверка изображений</h1>
-        <p className="intro">Загрузите JPEG, PNG или WebP. Файл будет проверен, сохранён приватно и поставлен в очередь обработки.</p>
+        <p className="intro">Загрузите JPEG, PNG или WebP. Файл будет сохранён приватно и пройдет начальную модерацию.</p>
         <UploadForm />
-        <p className="footnote">На этой фазе Worker принимает задание. Этапы AI-модерации добавляются следующей фазой.</p>
+        <p className="footnote">Результат появится после завершения проверки. <Link href="/admin/login">Вход в панель модерации</Link></p>
       </section>
     </main>
   );

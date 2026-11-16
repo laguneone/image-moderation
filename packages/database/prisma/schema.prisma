@@ -20,6 +20,11 @@ enum StageStatus {
   FAILED
 }
 
+enum ReviewAction {
+  APPROVED
+  REJECTED
+}
+
 model ModerationJob {
   id             String           @id @default(cuid())
   applicationId  String           @map("application_id") @db.VarChar(64)
@@ -29,6 +34,10 @@ model ModerationJob {
   context        Json             @default("{}") @db.JsonB
   idempotencyKey String?          @unique @map("idempotency_key") @db.VarChar(128)
   errorCode      String?          @map("error_code") @db.VarChar(100)
+  effectiveDecision String?       @map("effective_decision") @db.VarChar(32)
+  reviewAssigneeId  String?       @map("review_assignee_id") @db.VarChar(64)
+  reviewClaimedAt   DateTime?     @map("review_claimed_at")
+  reviewVersion     Int           @default(0) @map("review_version")
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
   startedAt      DateTime?        @map("started_at")
@@ -37,6 +46,8 @@ model ModerationJob {
   results        ModerationResult[]
   stageExecutions StageExecution[]
   invocations    ModelInvocation[]
+  reviewDecisions ReviewDecision[]
+  auditLogs      AuditLog[]
 
   @@index([applicationId, createdAt])
   @@index([status, createdAt])
@@ -114,4 +125,37 @@ model ModelInvocation {
 
   @@index([jobId, createdAt])
   @@map("model_invocations")
+}
+
+model ReviewDecision {
+  id             String        @id @default(cuid())
+  jobId          String        @map("job_id")
+  job            ModerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  actorId        String        @map("actor_id") @db.VarChar(64)
+  action         ReviewAction
+  rejectionReason String?      @map("rejection_reason") @db.VarChar(64)
+  comment        String?       @db.Text
+  reviewVersion  Int           @map("review_version")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  @@index([jobId, createdAt])
+  @@map("review_decisions")
+}
+
+model AuditLog {
+  id         String         @id @default(cuid())
+  jobId      String?        @map("job_id")
+  job        ModerationJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  actorId    String?        @map("actor_id") @db.VarChar(64)
+  action     String         @db.VarChar(100)
+  entityType String         @map("entity_type") @db.VarChar(64)
+  entityId   String         @map("entity_id") @db.VarChar(100)
+  before     Json?          @db.JsonB
+  after      Json?          @db.JsonB
+  metadata   Json           @default("{}") @db.JsonB
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  @@index([jobId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
 }

@@ -18,6 +18,11 @@ export class QueueProducerService implements OnModuleDestroy {
     await this.queue.add('moderate-image', payload, { jobId: payload.moderationJobId });
   }
 
+  async getCounts(): Promise<{ waiting: number; active: number; delayed: number }> {
+    const counts = await this.queue.getJobCounts('waiting', 'active', 'delayed');
+    return { waiting: counts.waiting ?? 0, active: counts.active ?? 0, delayed: counts.delayed ?? 0 };
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.queue.close();
   }

@@ -1,4 +1,4 @@
-import { CreateBucketCommand, DeleteObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 
 @Injectable()
@@ -40,6 +40,12 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.warn(`Could not remove an unreferenced upload object (${error instanceof Error ? error.message : 'unknown error'}).`);
     }
+  }
+
+  async getObject(key: string): Promise<Buffer> {
+    const response = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!response.Body) throw new Error('Stored image object has no content.');
+    return Buffer.from(await response.Body.transformToByteArray());
   }
 
   async onModuleDestroy(): Promise<void> {
