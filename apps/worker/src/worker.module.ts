@@ -116,10 +116,9 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
         suspiciousText: deep?.ocr?.suspicious_text,
         cropUnsafe: deep?.crops.regions?.some((region) => region.sexual_content),
         arbitratorRestricted: deep?.arbitration?.recommendation === 'RESTRICT',
-        confirmedSexualContent: deep?.crops.regions?.some((region) => region.sexual_content) === true
-          && deep.composition?.sexualized_focus === true
+        confirmedSexualContent: deep?.composition?.sexualized_focus === true
           && deep.context?.sexual_context === true
-          && deep.arbitration?.recommendation === 'RESTRICT',
+          && (deep.crops.regions?.some((region) => region.sexual_content) === true || deep.arbitration?.recommendation === 'RESTRICT'),
         fetishContentDetected: deep?.context?.fetish_content === true,
       };
       const preliminaryRisk = calculateRisk(riskInput);
