@@ -10,17 +10,29 @@ export interface OpenRouterResult {
   latencyMs: number;
 }
 
+export interface OpenRouterImage { buffer: Buffer; mimeType: string }
+
 @Injectable()
 export class OpenRouterClient {
   async analyze(model: string, prompt: string, image: Buffer, mimeType: string, jsonSchema?: Record<string, unknown>): Promise<OpenRouterResult> {
+    return this.analyzeImages(model, prompt, [{ buffer: image, mimeType }], jsonSchema);
+  }
+
+  async analyzeText(model: string, prompt: string, jsonSchema?: Record<string, unknown>): Promise<OpenRouterResult> {
+    return this.send(model, [{ type: 'text', text: prompt }], jsonSchema);
+  }
+
+  async analyzeImages(model: string, prompt: string, images: OpenRouterImage[], jsonSchema?: Record<string, unknown>): Promise<OpenRouterResult> {
+    if (images.length === 0 || images.length > 8) throw new Error('OpenRouter image request must contain between 1 and 8 images.');
     if (process.env.MODERATION_TEST_MODE === 'true' && !process.env.OPENROUTER_API_KEY) {
-      return {
-        content: model === 'nvidia/nemotron-3.5-content-safety'
-          ? 'Safety: safe\nCategories: none'
-          : JSON.stringify({ humans: { present: false, count: 0, categories: ['NO_HUMANS'] }, scene: { categories: ['INTERIOR_SCENE', 'FURNITURE'] }, objects: ['furniture'] }),
-        requestId: 'explicit-test-mode', provider: 'test', inputTokens: null, outputTokens: null, costUsd: null, latencyMs: 0,
-      };
+      return this.mockResult(model, prompt);
     }
+    const requestContent: Array<Record<string, unknown>> = [{ type: 'text', text: prompt }, ...images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.buffer.toString('base64')}` } }))];
+    return this.send(model, requestContent, jsonSchema);
+  }
+
+  private async send(model: string, content: Array<Record<string, unknown>>, jsonSchema?: Record<string, unknown>): Promise<OpenRouterResult> {
+    if (process.env.MODERATION_TEST_MODE === 'true' && !process.env.OPENROUTER_API_KEY) return this.mockResult(model, content[0] && typeof content[0].text === 'string' ? content[0].text : '');
     const apiKey = process.env.OPENROUTER_API_KEY?.trim();
     if (!apiKey) throw new Error('OPENROUTER_API_KEY is required unless MODERATION_TEST_MODE=true.');
     const started = Date.now();
@@ -29,10 +41,7 @@ export class OpenRouterClient {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER ?? 'http://localhost:3000', 'X-Title': 'NSFW Filter' },
       body: JSON.stringify({
         model,
-        messages: [{ role: 'user', content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${image.toString('base64')}` } },
-        ] }],
+        messages: [{ role: 'user', content }],
         ...(jsonSchema ? { response_format: { type: 'json_schema', json_schema: jsonSchema } } : {}),
         usage: { include: true },
       }),
@@ -45,11 +54,11 @@ export class OpenRouterClient {
     const choices = data.choices;
     if (!Array.isArray(choices) || typeof choices[0] !== 'object' || choices[0] === null) throw new Error('OpenRouter response has no choices.');
     const message = (choices[0] as Record<string, unknown>).message;
-    const content = typeof message === 'object' && message !== null ? (message as Record<string, unknown>).content : null;
-    if (typeof content !== 'string' || content.trim().length === 0) throw new Error('OpenRouter response has no textual content.');
+    const outputText = typeof message === 'object' && message !== null ? (message as Record<string, unknown>).content : null;
+    if (typeof outputText !== 'string' || outputText.trim().length === 0) throw new Error('OpenRouter response has no textual content.');
     const usage = typeof data.usage === 'object' && data.usage !== null ? data.usage as Record<string, unknown> : {};
     return {
-      content,
+      content: outputText,
       requestId: typeof data.id === 'string' ? data.id : null,
       provider: typeof data.provider === 'string' ? data.provider : null,
       inputTokens: finiteInteger(usage.prompt_tokens),
@@ -57,6 +66,24 @@ export class OpenRouterClient {
       costUsd: typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? usage.cost : null,
       latencyMs: Date.now() - started,
     };
+  }
+
+  private mockResult(model: string, prompt: string): OpenRouterResult {
+    const marker = prompt.match(/\[stage:([a-z_]+)\]/u)?.[1];
+    const answers: Record<string, unknown> = {
+      initial_scene: { humans: { present: false, count: 0, categories: ['NO_HUMANS'] }, scene: { categories: ['INTERIOR_SCENE', 'FURNITURE'] }, objects: ['furniture'] },
+      scene_decomposition: { scene_type: 'INTERIOR_SCENE', foreground: [], midground: [], background: [], persons: [], objects: [], artwork: [], text_regions: [], uncertainties: [] },
+      relationships: { relations: [], sexualized_interaction: false, evidence: [] },
+      composition: { visual_focus: 'interior objects', unusual_cropping: false, sexualized_focus: false, evidence: [] },
+      context: { classification: 'NON_SEXUAL', explanation: 'Ordinary interior scene.', sexual_context: false },
+      crops: { regions: [] },
+      ocr: { text_regions: [], suspicious_text: false },
+      arbitration: { recommendation: 'ALLOW', unresolved_questions: [], evidence: [] },
+    };
+    const content = model === 'nvidia/nemotron-3.5-content-safety'
+      ? 'Safety: safe\nCategories: none'
+      : marker && answers[marker] ? JSON.stringify(answers[marker]) : JSON.stringify(answers.initial_scene);
+    return { content, requestId: 'explicit-test-mode', provider: 'test', inputTokens: null, outputTokens: null, costUsd: null, latencyMs: 0 };
   }
 }
 

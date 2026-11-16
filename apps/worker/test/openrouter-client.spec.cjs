@@ -31,3 +31,20 @@ test('missing credentials without explicit test mode fail closed', async () => {
     if (priorKey !== undefined) process.env.OPENROUTER_API_KEY = priorKey;
   }
 });
+
+test('explicit mode supplies structured fixtures for deep analysis stages', async () => {
+  const priorMode = process.env.MODERATION_TEST_MODE;
+  const priorKey = process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
+  process.env.MODERATION_TEST_MODE = 'true';
+  try {
+    const response = await new OpenRouterClient().analyzeText('qwen/qwen3.6-flash', '[stage:relationships] Test observations');
+    const result = JSON.parse(response.content);
+    assert.equal(result.sexualized_interaction, false);
+    assert.deepEqual(result.relations, []);
+  } finally {
+    if (priorMode === undefined) delete process.env.MODERATION_TEST_MODE;
+    else process.env.MODERATION_TEST_MODE = priorMode;
+    if (priorKey !== undefined) process.env.OPENROUTER_API_KEY = priorKey;
+  }
+});

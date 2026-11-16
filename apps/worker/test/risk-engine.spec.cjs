@@ -22,3 +22,9 @@ test('suspicious metadata is review evidence and absence does not increase risk'
   assert.equal(withoutTerm.decision, 'ALLOW');
   assert.equal(withoutTerm.nsfwRiskScore, 0);
 });
+
+test('correlated deep signals use the maximum configured weight instead of stacking', () => {
+  const result = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 1, peoplePresent: false, humanBodyPartPresent: false, sexualizedRelationship: true, sexualizedContext: true });
+  assert.equal(result.nsfwRiskScore, 65);
+  assert.equal(result.decision, 'REVIEW');
+});

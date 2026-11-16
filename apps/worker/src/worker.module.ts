@@ -4,6 +4,7 @@ import { Job, Worker } from 'bullmq';
 import { Prisma, StageStatus } from '@moderation/database';
 import { getRedisConnectionOptions, MODERATION_QUEUE_NAME, ModerationQueuePayload } from '@moderation/shared';
 import { MetadataScanner } from './metadata-scanner';
+import { DeepAnalysisResult, DeepAnalyzer } from './deep-analyzer';
 import { OpenRouterClient, OpenRouterResult } from './openrouter.client';
 import { calculateRisk } from './risk-engine';
 import { WorkerPrismaService } from './worker-prisma.service';
@@ -32,7 +33,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
   });
   private worker: Worker<ModerationQueuePayload> | undefined;
 
-  constructor(private readonly prisma: WorkerPrismaService, private readonly metadataScanner: MetadataScanner, private readonly openRouter: OpenRouterClient) {}
+  constructor(private readonly prisma: WorkerPrismaService, private readonly metadataScanner: MetadataScanner, private readonly openRouter: OpenRouterClient, private readonly deepAnalyzer: DeepAnalyzer) {}
 
   onModuleInit(): void {
     const parsedConcurrency = Number(process.env.WORKER_CONCURRENCY ?? 4);
@@ -62,13 +63,31 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
       const safety = await this.runModelStage(job.id, 'nsfw_detection', NEMOTRON_MODEL, image, job.imageAsset.mimeType,
         'Classify the image for explicit nudity, sexual content, sexualized imagery, and other unsafe content. Reply using exactly: Safety: safe|unsafe; Categories: comma-separated labels or none. Do not infer certainty beyond what is visible.');
       const safetyResult = await this.runStage(job.id, 'nsfw_response_validation', NEMOTRON_MODEL, async () => parseSafety(safety.content));
-      const scene = safetyResult.criticalReview ? null : await (async () => {
+      let scene: ReturnType<typeof parseScene> | null = null;
+      if (!safetyResult.criticalReview) {
         const sceneCall = await this.runModelStage(job.id, 'people_object_detection', QWEN_MODEL, image, job.imageAsset.mimeType,
-          'Analyze visible people, human-like characters, body parts, interior scene types, and objects. Do not infer age as a fact. Return only the requested JSON.', QWEN_SCHEMA);
-        return this.runStage(job.id, 'people_response_validation', QWEN_MODEL, async () => parseScene(sceneCall.content));
-      })();
-      const risk = calculateRisk({ nsfwUnsafe: safetyResult.unsafe, sexualSignalCount: metadata.suspiciousKeywords.length, peoplePresent: scene?.humans.present ?? false, humanBodyPartPresent: scene?.humans.categories.includes('HUMAN_BODY_PART') ?? false, criticalReview: safetyResult.criticalReview });
-      const payload = { metadata_analysis: metadata, nsfw_detection: { model: NEMOTRON_MODEL, ...safetyResult }, people_object_detection: scene ? { model: QWEN_MODEL, ...scene } : { status: 'SKIPPED_CRITICAL_REVIEW' }, risk };
+          '[stage:initial_scene] Analyze visible people, human-like characters, body parts, interior scene types, and objects. Do not infer age as a fact. Return only the requested JSON.', QWEN_SCHEMA);
+        scene = await this.runStage(job.id, 'people_response_validation', QWEN_MODEL, async () => parseScene(sceneCall.content));
+      }
+      const deep: DeepAnalysisResult | null = scene ? await this.deepAnalyzer.analyze(job.id, image, job.imageAsset.mimeType, {
+        safety: safetyResult,
+        scene,
+        metadata: { suspiciousKeywords: metadata.suspiciousKeywords, sourceUrls: metadata.sourceUrls },
+        width: job.imageAsset.width,
+        height: job.imageAsset.height,
+      }) : null;
+      const risk = calculateRisk({
+        nsfwUnsafe: safetyResult.unsafe, sexualSignalCount: metadata.suspiciousKeywords.length,
+        peoplePresent: scene?.humans.present ?? false, humanBodyPartPresent: scene?.humans.categories.includes('HUMAN_BODY_PART') ?? false,
+        criticalReview: safetyResult.criticalReview,
+        sexualizedRelationship: deep?.relationships?.sexualized_interaction,
+        sexualizedComposition: deep?.composition?.sexualized_focus,
+        sexualizedContext: deep?.context?.sexual_context,
+        suspiciousText: deep?.ocr?.suspicious_text,
+        cropUnsafe: deep?.crops.regions?.some((region) => region.sexual_content),
+        arbitratorRestricted: deep?.arbitration?.recommendation === 'RESTRICT',
+      });
+      const payload = { metadata_analysis: metadata, nsfw_detection: { model: NEMOTRON_MODEL, ...safetyResult }, people_object_detection: scene ? { model: QWEN_MODEL, ...scene } : { status: 'SKIPPED_CRITICAL_REVIEW' }, deep_analysis: deep, risk };
       await this.prisma.$transaction(async (tx) => {
         await tx.moderationResult.create({ data: {
           jobId: job.id, nsfwRiskScore: risk.nsfwRiskScore, domainMismatchScore: risk.domainMismatchScore,
@@ -132,7 +151,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy(): Promise<void> { await this.worker?.close(); this.storage.destroy(); }
 }
 
-@Module({ providers: [WorkerPrismaService, MetadataScanner, OpenRouterClient, ModerationWorker] })
+@Module({ providers: [WorkerPrismaService, MetadataScanner, OpenRouterClient, DeepAnalyzer, ModerationWorker] })
 export class WorkerModule {}
 
 export function parseSafety(value: string): { unsafe: boolean; categories: string[]; criticalReview: boolean } {

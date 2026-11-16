@@ -1,9 +1,18 @@
-export interface RiskInput { nsfwUnsafe: boolean; sexualSignalCount: number; peoplePresent: boolean; humanBodyPartPresent: boolean; criticalReview?: boolean }
+export interface RiskInput { nsfwUnsafe: boolean; sexualSignalCount: number; peoplePresent: boolean; humanBodyPartPresent: boolean; criticalReview?: boolean; sexualizedRelationship?: boolean; sexualizedComposition?: boolean; sexualizedContext?: boolean; suspiciousText?: boolean; cropUnsafe?: boolean; arbitratorRestricted?: boolean }
 export interface RiskOutput { nsfwRiskScore: number; domainMismatchScore: number; decision: 'ALLOW' | 'REVIEW' | 'RESTRICT' | 'CRITICAL_REVIEW'; confidence: number | null; criticalFlags: string[]; reasons: string[] }
-export interface RiskConfig { allowMax: number; reviewMax: number; primaryNsfwPoints: number; metadataSignalPoints: number; peopleMismatchPoints: number; bodyPartMismatchPoints: number }
+export interface RiskConfig { allowMax: number; reviewMax: number; primaryNsfwPoints: number; metadataSignalPoints: number; relationshipPoints: number; compositionPoints: number; contextPoints: number; textPoints: number; cropPoints: number; arbitratorReviewPoints: number; peopleMismatchPoints: number; bodyPartMismatchPoints: number }
 
 export function calculateRisk(input: RiskInput, config: RiskConfig = loadRiskConfig()): RiskOutput {
-  const nsfwRiskScore = Math.min(100, input.nsfwUnsafe ? config.primaryNsfwPoints : input.sexualSignalCount > 0 ? config.metadataSignalPoints : 0);
+  const nsfwRiskScore = Math.min(100, Math.max(
+    input.nsfwUnsafe ? config.primaryNsfwPoints : 0,
+    input.sexualSignalCount > 0 ? config.metadataSignalPoints : 0,
+    input.sexualizedRelationship ? config.relationshipPoints : 0,
+    input.sexualizedComposition ? config.compositionPoints : 0,
+    input.sexualizedContext ? config.contextPoints : 0,
+    input.suspiciousText ? config.textPoints : 0,
+    input.cropUnsafe ? config.cropPoints : 0,
+    input.arbitratorRestricted ? config.arbitratorReviewPoints : 0,
+  ));
   const domainMismatchScore = Math.min(100, (input.peoplePresent ? config.peopleMismatchPoints : 0) + (input.humanBodyPartPresent ? config.bodyPartMismatchPoints : 0));
   const decision = input.criticalReview ? 'CRITICAL_REVIEW' : nsfwRiskScore > config.reviewMax ? 'RESTRICT' : nsfwRiskScore > config.allowMax || domainMismatchScore > config.allowMax ? 'REVIEW' : 'ALLOW';
   const reasons = [
@@ -11,6 +20,12 @@ export function calculateRisk(input: RiskInput, config: RiskConfig = loadRiskCon
     ...(input.sexualSignalCount > 0 && !input.nsfwUnsafe ? ['В метаданных или имени файла обнаружены подозрительные термины.'] : []),
     ...(input.peoplePresent ? ['Обнаружены люди или человекоподобные объекты; требуется проверка соответствия тематике интерьера.'] : []),
     ...(input.humanBodyPartPresent ? ['Обнаружены отдельные части тела; требуется дополнительная проверка.'] : []),
+    ...(input.sexualizedRelationship ? ['Relationship Engine обнаружил сексуализированное взаимодействие по структурированным признакам.'] : []),
+    ...(input.sexualizedComposition ? ['Анализ композиции выявил сексуализированный визуальный акцент.'] : []),
+    ...(input.sexualizedContext ? ['Контекстный анализ выявил сексуализированную ситуацию.'] : []),
+    ...(input.suspiciousText ? ['OCR обнаружил подозрительный текст на изображении.'] : []),
+    ...(input.cropUnsafe ? ['Локальный анализ отдельных областей выявил дополнительный сигнал.'] : []),
+    ...(input.arbitratorRestricted ? ['Независимый арбитр рекомендовал ручную проверку.'] : []),
     ...(input.criticalReview ? ['Модель обнаружила потенциально критическую категорию; обычный конвейер остановлен для специализированной проверки.'] : []),
   ];
   return { nsfwRiskScore, domainMismatchScore, decision, confidence: null, criticalFlags: input.criticalReview ? ['SPECIALIZED_SAFETY_REVIEW_REQUIRED'] : [], reasons };
@@ -22,6 +37,12 @@ export function loadRiskConfig(env: NodeJS.ProcessEnv = process.env): RiskConfig
     reviewMax: fromEnv(env.RISK_REVIEW_MAX, 69),
     primaryNsfwPoints: fromEnv(env.RISK_PRIMARY_NSFW_POINTS, 70),
     metadataSignalPoints: fromEnv(env.RISK_METADATA_SIGNAL_POINTS, 30),
+    relationshipPoints: fromEnv(env.RISK_RELATIONSHIP_POINTS, 65),
+    compositionPoints: fromEnv(env.RISK_COMPOSITION_POINTS, 40),
+    contextPoints: fromEnv(env.RISK_CONTEXT_POINTS, 65),
+    textPoints: fromEnv(env.RISK_TEXT_POINTS, 50),
+    cropPoints: fromEnv(env.RISK_CROP_POINTS, 60),
+    arbitratorReviewPoints: fromEnv(env.RISK_ARBITRATOR_REVIEW_POINTS, 40),
     peopleMismatchPoints: fromEnv(env.RISK_PEOPLE_MISMATCH_POINTS, 35),
     bodyPartMismatchPoints: fromEnv(env.RISK_BODY_PART_MISMATCH_POINTS, 35),
   };
