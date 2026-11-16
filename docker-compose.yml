@@ -26,6 +26,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-change-me-local}@postgres:5432/${POSTGRES_DB:-moderation}?schema=public
       REDIS_URL: redis://redis:6379
       UPLOAD_API_KEY: ${UPLOAD_API_KEY:-}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: "false"

@@ -20,9 +20,13 @@ test('anomaly triggers bounded deep stages with explicit local model fixtures', 
     modelInvocation: { create: async () => ({}) },
     $transaction: async (operations) => Promise.all(operations),
   };
+  const config = {
+    model: async (_key, fallbackModelId) => ({ modelId: fallbackModelId, timeoutMs: 90_000, maxTokens: null, fallbackModelId: null, generationParams: {} }),
+    prompt: async (_key, content) => ({ content, id: undefined }),
+  };
   try {
     const image = await sharp({ create: { width: 1024, height: 768, channels: 3, background: '#bcbcbc' } }).png().toBuffer();
-    const result = await new DeepAnalyzer(prisma, new OpenRouterClient()).analyze('job-test', image, 'image/png', {
+    const result = await new DeepAnalyzer(prisma, new OpenRouterClient(), config).analyze('job-test', image, 'image/png', {
       safety: { unsafe: false, categories: [] },
       scene: { humans: { present: false, count: 0, categories: ['NO_HUMANS'] }, scene: { categories: ['INTERIOR_SCENE'] }, objects: ['table'] },
       metadata: { suspiciousKeywords: ['explicit'], sourceUrls: [] },

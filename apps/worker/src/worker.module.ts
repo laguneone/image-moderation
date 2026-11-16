@@ -2,12 +2,13 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Injectable, Logger, Module, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Job, Worker } from 'bullmq';
 import { Prisma, StageStatus } from '@moderation/database';
-import { getRedisConnectionOptions, MODERATION_QUEUE_NAME, ModerationQueuePayload } from '@moderation/shared';
+import { evaluateRules, getRedisConnectionOptions, MODERATION_QUEUE_NAME, ModerationQueuePayload } from '@moderation/shared';
 import { MetadataScanner } from './metadata-scanner';
 import { DeepAnalysisResult, DeepAnalyzer } from './deep-analyzer';
 import { OpenRouterClient, OpenRouterResult } from './openrouter.client';
 import { calculateRisk } from './risk-engine';
 import { WorkerPrismaService } from './worker-prisma.service';
+import { ActiveModel, WorkerConfigurationService } from './worker-configuration.service';
 
 const NEMOTRON_MODEL = process.env.OPENROUTER_NEMOTRON_MODEL ?? 'nvidia/nemotron-3.5-content-safety';
 const QWEN_MODEL = process.env.OPENROUTER_QWEN_MODEL ?? 'qwen/qwen3.6-flash';
@@ -33,7 +34,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
   });
   private worker: Worker<ModerationQueuePayload> | undefined;
 
-  constructor(private readonly prisma: WorkerPrismaService, private readonly metadataScanner: MetadataScanner, private readonly openRouter: OpenRouterClient, private readonly deepAnalyzer: DeepAnalyzer) {}
+  constructor(private readonly prisma: WorkerPrismaService, private readonly metadataScanner: MetadataScanner, private readonly openRouter: OpenRouterClient, private readonly deepAnalyzer: DeepAnalyzer, private readonly config: WorkerConfigurationService) {}
 
   onModuleInit(): void {
     const parsedConcurrency = Number(process.env.WORKER_CONCURRENCY ?? 4);
@@ -53,6 +54,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
   private async processJob(queueJob: Job<ModerationQueuePayload>): Promise<void> {
     const job = await this.prisma.moderationJob.findUnique({ where: { id: queueJob.data.moderationJobId }, include: { imageAsset: true } });
     if (!job || job.status === 'COMPLETED') return;
+    const pipeline = await this.config.pinPipeline(job.id, job.pipeline, job.pipelineVersionId);
     await this.prisma.moderationJob.updateMany({ where: { id: job.id, status: 'QUEUED' }, data: { status: 'PROCESSING', startedAt: new Date(), errorCode: null } });
     try {
       const object = await this.storage.send(new GetObjectCommand({ Bucket: this.bucket, Key: job.imageAsset.objectKey }));
@@ -60,23 +62,31 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
       const image = Buffer.from(await object.Body.transformToByteArray());
       if (BigInt(image.length) !== job.imageAsset.sizeBytes) throw new Error('Stored image size does not match its database record.');
       const metadata = await this.runStage(job.id, 'metadata_analysis', null, () => this.metadataScanner.scan(image, job.imageAsset.originalName));
-      const safety = await this.runModelStage(job.id, 'nsfw_detection', NEMOTRON_MODEL, image, job.imageAsset.mimeType,
-        'Classify the image for explicit nudity, sexual content, sexualized imagery, and other unsafe content. Reply using exactly: Safety: safe|unsafe; Categories: comma-separated labels or none. Do not infer certainty beyond what is visible.');
-      const safetyResult = await this.runStage(job.id, 'nsfw_response_validation', NEMOTRON_MODEL, async () => parseSafety(safety.content));
+      const safetyModel = await this.config.model('nsfw_detection', NEMOTRON_MODEL);
+      const safetyPrompt = await this.config.prompt('initial_nsfw', 'Classify the image for explicit nudity, sexual content, sexualized imagery, and other unsafe content. Reply using exactly: Safety: safe|unsafe; Categories: comma-separated labels or none. Do not infer certainty beyond what is visible.');
+      const safety = await this.runModelStage(job.id, 'nsfw_detection', safetyModel, safetyPrompt.content, safetyPrompt.id, image, job.imageAsset.mimeType);
+      const safetyResult = await this.runStage(job.id, 'nsfw_response_validation', safetyModel.modelId, async () => parseSafety(safety.content));
       let scene: ReturnType<typeof parseScene> | null = null;
+      let sceneModelId = QWEN_MODEL;
       if (!safetyResult.criticalReview) {
-        const sceneCall = await this.runModelStage(job.id, 'people_object_detection', QWEN_MODEL, image, job.imageAsset.mimeType,
-          '[stage:initial_scene] Analyze visible people, human-like characters, body parts, interior scene types, and objects. Do not infer age as a fact. Return only the requested JSON.', QWEN_SCHEMA);
-        scene = await this.runStage(job.id, 'people_response_validation', QWEN_MODEL, async () => parseScene(sceneCall.content));
+        const sceneModel = await this.config.model('initial_scene', QWEN_MODEL);
+        sceneModelId = sceneModel.modelId;
+        const scenePrompt = await this.config.prompt('initial_scene', '[stage:initial_scene] Analyze visible people, human-like characters, body parts, interior scene types, and objects. Do not infer age as a fact. Return only the requested JSON.');
+        const sceneCall = await this.runModelStage(job.id, 'people_object_detection', sceneModel, scenePrompt.content, scenePrompt.id, image, job.imageAsset.mimeType, QWEN_SCHEMA);
+        scene = await this.runStage(job.id, 'people_response_validation', sceneModel.modelId, async () => parseScene(sceneCall.content));
       }
-      const deep: DeepAnalysisResult | null = scene ? await this.deepAnalyzer.analyze(job.id, image, job.imageAsset.mimeType, {
+      const rules = await this.config.activeRules();
+      const initialRuleOutcome = evaluateRules(rules, { nsfwUnsafe: safetyResult.unsafe, peoplePresent: scene?.humans.present ?? false, criticalReview: safetyResult.criticalReview, suspiciousText: false, sexualizedContext: false, sexualizedInteraction: false }, job.applicationId);
+      const deep: DeepAnalysisResult | null = scene && pipeline.deepAnalysis ? await this.deepAnalyzer.analyze(job.id, image, job.imageAsset.mimeType, {
         safety: safetyResult,
         scene,
         metadata: { suspiciousKeywords: metadata.suspiciousKeywords, sourceUrls: metadata.sourceUrls },
         width: job.imageAsset.width,
         height: job.imageAsset.height,
+        forceDeep: initialRuleOutcome.triggerDeepAnalysis,
+        maxImageCrops: pipeline.maxImageCrops,
       }) : null;
-      const risk = calculateRisk({
+      const riskInput = {
         nsfwUnsafe: safetyResult.unsafe, sexualSignalCount: metadata.suspiciousKeywords.length,
         peoplePresent: scene?.humans.present ?? false, humanBodyPartPresent: scene?.humans.categories.includes('HUMAN_BODY_PART') ?? false,
         criticalReview: safetyResult.criticalReview,
@@ -86,8 +96,11 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
         suspiciousText: deep?.ocr?.suspicious_text,
         cropUnsafe: deep?.crops.regions?.some((region) => region.sexual_content),
         arbitratorRestricted: deep?.arbitration?.recommendation === 'RESTRICT',
-      });
-      const payload = { metadata_analysis: metadata, nsfw_detection: { model: NEMOTRON_MODEL, ...safetyResult }, people_object_detection: scene ? { model: QWEN_MODEL, ...scene } : { status: 'SKIPPED_CRITICAL_REVIEW' }, deep_analysis: deep, risk };
+      };
+      const preliminaryRisk = calculateRisk(riskInput);
+      const finalRuleOutcome = evaluateRules(rules, { nsfwUnsafe: safetyResult.unsafe, peoplePresent: scene?.humans.present ?? false, criticalReview: safetyResult.criticalReview, suspiciousText: deep?.ocr?.suspicious_text ?? false, sexualizedContext: deep?.context?.sexual_context ?? false, sexualizedInteraction: deep?.relationships?.sexualized_interaction ?? false, nsfwRiskScore: preliminaryRisk.nsfwRiskScore, domainMismatchScore: preliminaryRisk.domainMismatchScore, sexualSignalCount: metadata.suspiciousKeywords.length, confidence: preliminaryRisk.confidence }, job.applicationId);
+      const risk = calculateRisk({ ...riskInput, forceReview: initialRuleOutcome.requireReview || finalRuleOutcome.requireReview });
+      const payload = { metadata_analysis: metadata, nsfw_detection: { model: safetyModel.modelId, ...safetyResult }, people_object_detection: scene ? { model: sceneModelId, ...scene } : { status: 'SKIPPED_CRITICAL_REVIEW' }, deep_analysis: deep, matched_rules: [...new Set([...initialRuleOutcome.matchedRuleKeys, ...finalRuleOutcome.matchedRuleKeys])], risk };
       await this.prisma.$transaction(async (tx) => {
         await tx.moderationResult.create({ data: {
           jobId: job.id, nsfwRiskScore: risk.nsfwRiskScore, domainMismatchScore: risk.domainMismatchScore,
@@ -114,11 +127,12 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async runModelStage(jobId: string, stageType: string, modelId: string, image: Buffer, mimeType: string, prompt: string, schema?: Record<string, unknown>): Promise<OpenRouterResult> {
+  private async runModelStage(jobId: string, stageType: string, model: ActiveModel, prompt: string, promptVersionId: string | undefined, image: Buffer, mimeType: string, schema?: Record<string, unknown>): Promise<OpenRouterResult> {
+    const modelId = model.modelId;
     const startedAt = new Date();
-    const stage = await this.prisma.stageExecution.create({ data: { jobId, stageType, modelId, status: StageStatus.PROCESSING } });
+    const stage = await this.prisma.stageExecution.create({ data: { jobId, stageType, modelId, promptVersionId, status: StageStatus.PROCESSING } });
     try {
-      const response = await this.openRouter.analyze(modelId, prompt, image, mimeType, schema);
+      const response = await this.openRouter.analyze(modelId, prompt, image, mimeType, schema, model);
       await this.prisma.$transaction([
         this.prisma.modelInvocation.create({ data: { jobId, stageExecutionId: stage.id, modelId, provider: response.provider, requestId: response.requestId, inputTokens: response.inputTokens, outputTokens: response.outputTokens, costUsd: response.costUsd ?? undefined, latencyMs: response.latencyMs, status: StageStatus.COMPLETED } }),
         this.prisma.stageExecution.update({ where: { id: stage.id }, data: { completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(), normalizedOutput: { content: response.content } } }),
@@ -151,7 +165,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy(): Promise<void> { await this.worker?.close(); this.storage.destroy(); }
 }
 
-@Module({ providers: [WorkerPrismaService, MetadataScanner, OpenRouterClient, DeepAnalyzer, ModerationWorker] })
+@Module({ providers: [WorkerPrismaService, MetadataScanner, OpenRouterClient, WorkerConfigurationService, DeepAnalyzer, ModerationWorker] })
 export class WorkerModule {}
 
 export function parseSafety(value: string): { unsafe: boolean; categories: string[]; criticalReview: boolean } {

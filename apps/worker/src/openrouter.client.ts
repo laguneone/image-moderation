@@ -11,27 +11,28 @@ export interface OpenRouterResult {
 }
 
 export interface OpenRouterImage { buffer: Buffer; mimeType: string }
+export interface OpenRouterOptions { timeoutMs?: number; maxTokens?: number | null; fallbackModelId?: string | null; generationParams?: Record<string, unknown> }
 
 @Injectable()
 export class OpenRouterClient {
-  async analyze(model: string, prompt: string, image: Buffer, mimeType: string, jsonSchema?: Record<string, unknown>): Promise<OpenRouterResult> {
-    return this.analyzeImages(model, prompt, [{ buffer: image, mimeType }], jsonSchema);
+  async analyze(model: string, prompt: string, image: Buffer, mimeType: string, jsonSchema?: Record<string, unknown>, options?: OpenRouterOptions): Promise<OpenRouterResult> {
+    return this.analyzeImages(model, prompt, [{ buffer: image, mimeType }], jsonSchema, options);
   }
 
-  async analyzeText(model: string, prompt: string, jsonSchema?: Record<string, unknown>): Promise<OpenRouterResult> {
-    return this.send(model, [{ type: 'text', text: prompt }], jsonSchema);
+  async analyzeText(model: string, prompt: string, jsonSchema?: Record<string, unknown>, options?: OpenRouterOptions): Promise<OpenRouterResult> {
+    return this.send(model, [{ type: 'text', text: prompt }], jsonSchema, options);
   }
 
-  async analyzeImages(model: string, prompt: string, images: OpenRouterImage[], jsonSchema?: Record<string, unknown>): Promise<OpenRouterResult> {
+  async analyzeImages(model: string, prompt: string, images: OpenRouterImage[], jsonSchema?: Record<string, unknown>, options?: OpenRouterOptions): Promise<OpenRouterResult> {
     if (images.length === 0 || images.length > 8) throw new Error('OpenRouter image request must contain between 1 and 8 images.');
     if (process.env.MODERATION_TEST_MODE === 'true' && !process.env.OPENROUTER_API_KEY) {
       return this.mockResult(model, prompt);
     }
     const requestContent: Array<Record<string, unknown>> = [{ type: 'text', text: prompt }, ...images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.buffer.toString('base64')}` } }))];
-    return this.send(model, requestContent, jsonSchema);
+    return this.send(model, requestContent, jsonSchema, options);
   }
 
-  private async send(model: string, content: Array<Record<string, unknown>>, jsonSchema?: Record<string, unknown>): Promise<OpenRouterResult> {
+  private async send(model: string, content: Array<Record<string, unknown>>, jsonSchema?: Record<string, unknown>, options: OpenRouterOptions = {}): Promise<OpenRouterResult> {
     if (process.env.MODERATION_TEST_MODE === 'true' && !process.env.OPENROUTER_API_KEY) return this.mockResult(model, content[0] && typeof content[0].text === 'string' ? content[0].text : '');
     const apiKey = process.env.OPENROUTER_API_KEY?.trim();
     if (!apiKey) throw new Error('OPENROUTER_API_KEY is required unless MODERATION_TEST_MODE=true.');
@@ -41,11 +42,14 @@ export class OpenRouterClient {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER ?? 'http://localhost:3000', 'X-Title': 'NSFW Filter' },
       body: JSON.stringify({
         model,
+        ...(options.fallbackModelId ? { models: [model, options.fallbackModelId] } : {}),
         messages: [{ role: 'user', content }],
+        ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
+        ...safeGenerationParams(options.generationParams),
         ...(jsonSchema ? { response_format: { type: 'json_schema', json_schema: jsonSchema } } : {}),
         usage: { include: true },
       }),
-      signal: AbortSignal.timeout(90_000),
+      signal: AbortSignal.timeout(options.timeoutMs ?? 90_000),
     });
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) throw new Error(`OpenRouter request failed (${response.status}): ${safeError(body)}`);
@@ -85,6 +89,17 @@ export class OpenRouterClient {
       : marker && answers[marker] ? JSON.stringify(answers[marker]) : JSON.stringify(answers.initial_scene);
     return { content, requestId: 'explicit-test-mode', provider: 'test', inputTokens: null, outputTokens: null, costUsd: null, latencyMs: 0 };
   }
+}
+
+function safeGenerationParams(params: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!params) return {};
+  const supported = ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'seed'];
+  const result: Record<string, unknown> = {};
+  for (const key of supported) {
+    const value = params[key];
+    if (typeof value === 'number' && Number.isFinite(value)) result[key] = value;
+  }
+  return result;
 }
 
 function finiteInteger(value: unknown): number | null {

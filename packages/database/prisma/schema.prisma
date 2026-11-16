@@ -25,12 +25,21 @@ enum ReviewAction {
   REJECTED
 }
 
+enum ConfigStatus {
+  DRAFT
+  TESTING
+  ACTIVE
+  ARCHIVED
+}
+
 model ModerationJob {
   id             String           @id @default(cuid())
   applicationId  String           @map("application_id") @db.VarChar(64)
   imageAssetId   String           @map("image_asset_id")
   status         ModerationStatus @default(QUEUED)
   pipeline       String           @default("interior-default") @db.VarChar(100)
+  pipelineVersionId String?        @map("pipeline_version_id")
+  pipelineVersion PipelineVersion? @relation(fields: [pipelineVersionId], references: [id], onDelete: Restrict)
   context        Json             @default("{}") @db.JsonB
   idempotencyKey String?          @unique @map("idempotency_key") @db.VarChar(128)
   errorCode      String?          @map("error_code") @db.VarChar(100)
@@ -158,4 +167,105 @@ model AuditLog {
   @@index([jobId, createdAt])
   @@index([actorId, createdAt])
   @@map("audit_logs")
+}
+
+model ModelConfiguration {
+  id                String       @id @default(cuid())
+  key               String       @db.VarChar(64)
+  version           Int
+  name              String       @db.VarChar(120)
+  role              String       @db.VarChar(64)
+  openRouterModelId String       @map("openrouter_model_id") @db.VarChar(200)
+  status            ConfigStatus @default(DRAFT)
+  inputModalities   String[]     @default(["image", "text"]) @map("input_modalities")
+  structuredOutput  Boolean      @default(false) @map("structured_output")
+  generationParams  Json         @default("{}") @map("generation_params") @db.JsonB
+  timeoutMs         Int          @default(90000) @map("timeout_ms")
+  maxTokens         Int?         @map("max_tokens")
+  maxCostUsd        Decimal?     @map("max_cost_usd") @db.Decimal(12, 6)
+  fallbackModelId   String?      @map("fallback_model_id") @db.VarChar(200)
+  createdBy         String?      @map("created_by") @db.VarChar(64)
+  createdAt         DateTime     @default(now()) @map("created_at")
+
+  @@unique([key, version])
+  @@index([key, status])
+  @@map("model_configurations")
+}
+
+model PromptTemplate {
+  id        String          @id @default(cuid())
+  key       String          @unique @db.VarChar(64)
+  name      String          @db.VarChar(120)
+  versions  PromptVersion[]
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  @@map("prompt_templates")
+}
+
+model PromptVersion {
+  id         String       @id @default(cuid())
+  templateId String       @map("template_id")
+  template   PromptTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version    Int
+  modelRole  String       @map("model_role") @db.VarChar(64)
+  content    String       @db.Text
+  status     ConfigStatus @default(DRAFT)
+  createdBy  String?      @map("created_by") @db.VarChar(64)
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@unique([templateId, version])
+  @@index([templateId, status])
+  @@map("prompt_versions")
+}
+
+model PipelineVersion {
+  id            String       @id @default(cuid())
+  pipelineKey   String       @map("pipeline_key") @db.VarChar(100)
+  version       Int
+  name          String       @db.VarChar(120)
+  status        ConfigStatus @default(DRAFT)
+  configuration Json         @default("{}") @db.JsonB
+  createdBy     String?      @map("created_by") @db.VarChar(64)
+  publishedAt   DateTime?    @map("published_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  jobs          ModerationJob[]
+
+  @@unique([pipelineKey, version])
+  @@index([pipelineKey, status])
+  @@map("pipeline_versions")
+}
+
+model RuleVersion {
+  id             String       @id @default(cuid())
+  key            String       @db.VarChar(64)
+  version        Int
+  name           String       @db.VarChar(120)
+  description    String?      @db.Text
+  enabled        Boolean      @default(true)
+  priority       Int          @default(100)
+  conditions     Json         @db.JsonB
+  actions        Json         @db.JsonB
+  applicationIds String[]     @default([]) @map("application_ids")
+  status         ConfigStatus @default(DRAFT)
+  createdBy      String?      @map("created_by") @db.VarChar(64)
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@unique([key, version])
+  @@index([status, enabled, priority])
+  @@map("rule_versions")
+}
+
+model ConfigurationAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  @map("actor_id") @db.VarChar(64)
+  entityType String   @map("entity_type") @db.VarChar(64)
+  entityId   String   @map("entity_id") @db.VarChar(100)
+  action     String   @db.VarChar(100)
+  before     Json?    @db.JsonB
+  after      Json?    @db.JsonB
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("configuration_audit_logs")
 }

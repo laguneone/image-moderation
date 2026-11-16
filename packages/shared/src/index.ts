@@ -6,6 +6,8 @@ export interface HealthResponse {
 }
 
 export const MODERATION_QUEUE_NAME = 'moderation';
+export { evaluateRules } from './rule-engine';
+export type { RuntimeRule, RuleOutcome } from './rule-engine';
 
 export interface ModerationQueuePayload {
   moderationJobId: string;

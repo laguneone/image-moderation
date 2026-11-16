@@ -1,1 +1,1 @@
-export { Prisma, PrismaClient, StageStatus } from '@prisma/client';
+export { ConfigStatus, Prisma, PrismaClient, StageStatus } from '@prisma/client';

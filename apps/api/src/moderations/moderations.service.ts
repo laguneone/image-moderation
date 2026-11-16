@@ -182,7 +182,7 @@ export class ModerationsService {
 
   async getAdminDetail(id: string, role: AdminRole): Promise<Record<string, unknown>> {
     const job = await this.prisma.moderationJob.findUnique({ where: { id }, include: {
-      imageAsset: true, results: { orderBy: { createdAt: 'desc' } },
+      imageAsset: true, pipelineVersion: true, results: { orderBy: { createdAt: 'desc' } },
       stageExecutions: { orderBy: { startedAt: 'asc' }, include: { invocations: true } },
       invocations: { orderBy: { createdAt: 'asc' } }, reviewDecisions: { orderBy: { createdAt: 'asc' } }, auditLogs: { orderBy: { createdAt: 'asc' } },
     } });
@@ -190,7 +190,7 @@ export class ModerationsService {
     const latest = job.results[0];
     if (latest?.decision === 'CRITICAL_REVIEW' && role !== 'SPECIALIST') throw new ForbiddenException('This item requires a specialist reviewer.');
     return {
-      job_id: job.id, status: job.status.toLowerCase(), application_id: job.applicationId, pipeline: job.pipeline,
+      job_id: job.id, status: job.status.toLowerCase(), application_id: job.applicationId, pipeline: job.pipeline, pipeline_version: job.pipelineVersion ? { id: job.pipelineVersion.id, version: job.pipelineVersion.version, name: job.pipelineVersion.name } : null,
       created_at: job.createdAt, started_at: job.startedAt, completed_at: job.completedAt, effective_decision: job.effectiveDecision,
       review_assignee_id: job.reviewAssigneeId, review_version: job.reviewVersion,
       image: { mime_type: job.imageAsset.mimeType, size_bytes: Number(job.imageAsset.sizeBytes), width: job.imageAsset.width, height: job.imageAsset.height, sha256: job.imageAsset.sha256 },

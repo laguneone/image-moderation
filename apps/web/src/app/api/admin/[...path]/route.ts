@@ -21,6 +21,11 @@ async function proxy(request: Request, context: RouteContext, method: 'GET' | 'P
   const target = new URL(`/api/v1/admin/${path.map(encodeURIComponent).join('/')}`, apiUrl);
   target.search = new URL(request.url).search;
   const headers = new Headers({ 'x-api-key': apiKey, 'x-admin-id': session.id, 'x-admin-role': session.role });
+  if (path[0] === 'configuration') {
+    if (session.role !== 'ADMIN') return Response.json({ error: 'Управлять конфигурацией может только администратор.' }, { status: 403 });
+    const adminToken = cookieValue(request.headers.get('cookie'), ADMIN_COOKIE);
+    if (adminToken) headers.set('x-admin-session', adminToken);
+  }
   const requestHeaders = new Headers(request.headers);
   const contentType = requestHeaders.get('content-type');
   if (contentType) headers.set('content-type', contentType);
