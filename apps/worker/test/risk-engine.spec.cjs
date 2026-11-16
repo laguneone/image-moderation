@@ -28,3 +28,33 @@ test('correlated deep signals use the maximum configured weight instead of stack
   assert.equal(result.nsfwRiskScore, 65);
   assert.equal(result.decision, 'REVIEW');
 });
+
+test('corroborated sexual content is restricted even when its score is below the ordinary threshold', () => {
+  const result = calculateRisk({
+    nsfwUnsafe: false,
+    sexualSignalCount: 0,
+    peoplePresent: true,
+    humanBodyPartPresent: false,
+    sexualizedRelationship: true,
+    sexualizedComposition: true,
+    sexualizedContext: true,
+    cropUnsafe: true,
+    arbitratorRestricted: true,
+    confirmedSexualContent: true,
+  });
+  assert.equal(result.nsfwRiskScore, 65);
+  assert.equal(result.decision, 'RESTRICT');
+  assert.ok(result.reasons.some((reason) => reason.includes('подтверждён')));
+});
+
+test('one crop or an arbitrator recommendation alone does not bypass the ordinary thresholds', () => {
+  const result = calculateRisk({
+    nsfwUnsafe: false,
+    sexualSignalCount: 0,
+    peoplePresent: false,
+    humanBodyPartPresent: false,
+    cropUnsafe: true,
+    arbitratorRestricted: true,
+  });
+  assert.equal(result.decision, 'REVIEW');
+});
