@@ -34,6 +34,21 @@ test('a clearly identified sexual object forces deeper review', () => {
   assert.ok(result.reasons.some((reason) => reason.includes('сексуальную игрушку')));
 });
 
+test('a confirmed sexual product is restricted regardless of arbitrator recommendation or nudity', () => {
+  const result = calculateRisk({
+    nsfwUnsafe: false,
+    sexualSignalCount: 0,
+    peoplePresent: false,
+    humanBodyPartPresent: false,
+    interiorContextPresent: false,
+    suspiciousSexualObject: true,
+    sexualizedContext: true,
+    confirmedSexualObject: true,
+  });
+  assert.equal(result.decision, 'RESTRICT');
+  assert.ok(result.reasons.some((reason) => reason.includes('Сексуальная игрушка подтверждена')));
+});
+
 test('suspicious metadata is review evidence and absence does not increase risk', () => {
   const withTerm = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 1, peoplePresent: false, humanBodyPartPresent: false });
   const withoutTerm = calculateRisk({ nsfwUnsafe: false, sexualSignalCount: 0, peoplePresent: false, humanBodyPartPresent: false });

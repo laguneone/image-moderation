@@ -1,4 +1,4 @@
-export interface RiskInput { nsfwUnsafe: boolean; primaryUnsafeOverruled?: boolean; sexualSignalCount: number; peoplePresent: boolean; humanBodyPartPresent: boolean; interiorContextPresent?: boolean; suspiciousSexualObject?: boolean; criticalReview?: boolean; forceReview?: boolean; sexualizedRelationship?: boolean; sexualizedComposition?: boolean; sexualizedContext?: boolean; suspiciousText?: boolean; cropUnsafe?: boolean; arbitratorRestricted?: boolean; confirmedSexualContent?: boolean; fetishContentDetected?: boolean }
+export interface RiskInput { nsfwUnsafe: boolean; primaryUnsafeOverruled?: boolean; sexualSignalCount: number; peoplePresent: boolean; humanBodyPartPresent: boolean; interiorContextPresent?: boolean; suspiciousSexualObject?: boolean; confirmedSexualObject?: boolean; criticalReview?: boolean; forceReview?: boolean; sexualizedRelationship?: boolean; sexualizedComposition?: boolean; sexualizedContext?: boolean; suspiciousText?: boolean; cropUnsafe?: boolean; arbitratorRestricted?: boolean; confirmedSexualContent?: boolean; fetishContentDetected?: boolean }
 export interface RiskOutput { nsfwRiskScore: number; domainMismatchScore: number; decision: 'ALLOW' | 'REVIEW' | 'RESTRICT' | 'CRITICAL_REVIEW'; confidence: number | null; criticalFlags: string[]; reasons: string[] }
 export interface RiskConfig { allowMax: number; reviewMax: number; primaryNsfwPoints: number; metadataSignalPoints: number; relationshipPoints: number; compositionPoints: number; contextPoints: number; textPoints: number; cropPoints: number; arbitratorReviewPoints: number; peopleMismatchPoints: number; bodyPartMismatchPoints: number }
 
@@ -15,7 +15,7 @@ export function calculateRisk(input: RiskInput, config: RiskConfig = loadRiskCon
   ));
   const domainMismatchScore = Math.min(100, (input.peoplePresent ? config.peopleMismatchPoints : 0) + (input.humanBodyPartPresent ? config.bodyPartMismatchPoints : 0));
   const domainNeedsReview = domainMismatchScore > config.allowMax && (!input.interiorContextPresent || input.humanBodyPartPresent);
-  const decision = input.criticalReview ? 'CRITICAL_REVIEW' : input.confirmedSexualContent || input.fetishContentDetected || nsfwRiskScore > config.reviewMax ? 'RESTRICT' : input.forceReview || input.suspiciousSexualObject || nsfwRiskScore > config.allowMax || domainNeedsReview ? 'REVIEW' : 'ALLOW';
+  const decision = input.criticalReview ? 'CRITICAL_REVIEW' : input.confirmedSexualObject || input.confirmedSexualContent || input.fetishContentDetected || nsfwRiskScore > config.reviewMax ? 'RESTRICT' : input.forceReview || input.suspiciousSexualObject || nsfwRiskScore > config.allowMax || domainNeedsReview ? 'REVIEW' : 'ALLOW';
   const reasons = [
     ...(input.nsfwUnsafe && input.primaryUnsafeOverruled ? ['Сигнал Nemotron не подтвердился: независимый контекстный анализ, композиция, все фрагменты и арбитр дали безопасную оценку.'] : []),
     ...(input.nsfwUnsafe && !input.primaryUnsafeOverruled ? ['Первичная проверка Nemotron подала сигнал о небезопасном содержимом; требуется дополнительная оценка.'] : []),
@@ -23,6 +23,7 @@ export function calculateRisk(input: RiskInput, config: RiskConfig = loadRiskCon
     ...(input.peoplePresent ? ['Обнаружены люди или человекоподобные объекты; сигнал влияет на доменное соответствие.'] : []),
     ...(input.humanBodyPartPresent ? ['Обнаружены отдельные части тела; требуется дополнительная проверка.'] : []),
     ...(input.suspiciousSexualObject ? ['Обнаружен предмет, похожий на сексуальную игрушку; требуется контекстная проверка.'] : []),
+    ...(input.confirmedSexualObject ? ['Сексуальная игрушка подтверждена распознаванием объекта и сексуальным контекстом; публикация ограничена.'] : []),
     ...(input.sexualizedRelationship ? ['Relationship Engine обнаружил сексуализированное взаимодействие по структурированным признакам.'] : []),
     ...(input.sexualizedComposition ? ['Анализ композиции выявил сексуализированный визуальный акцент.'] : []),
     ...(input.sexualizedContext ? ['Контекстный анализ выявил сексуализированную ситуацию.'] : []),

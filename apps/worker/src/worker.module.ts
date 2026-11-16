@@ -109,6 +109,7 @@ class ModerationWorker implements OnModuleInit, OnModuleDestroy {
         peoplePresent: scene?.humans.present ?? false, humanBodyPartPresent: scene?.humans.categories.includes('HUMAN_BODY_PART') ?? false,
         interiorContextPresent: scene?.scene.categories.includes('INTERIOR_SCENE') === true && scene.scene.categories.includes('FURNITURE'),
         suspiciousSexualObject,
+        confirmedSexualObject: hasConfirmedSexualObject(scene?.objects ?? [], deep),
         criticalReview: safetyResult.criticalReview,
         sexualizedRelationship: deep?.relationships?.sexualized_interaction,
         sexualizedComposition: deep?.composition?.sexualized_focus,
@@ -269,6 +270,22 @@ export function canOverridePrimaryUnsafe(
 export function hasPotentialSexualObject(objects: string[]): boolean {
   const pattern = /\b(?:sex[\s-]?toys?|vibrators?|dildos?|masturbators?|erotic\s+toys?|sexual\s+toys?)\b|(?:секс[\s-]?игрушк\p{L}*|вибратор\p{L}*|фаллоимитатор\p{L}*|мастурбатор\p{L}*|дилдо\p{L}*|эротическ\p{L}*\s+(?:игрушк\p{L}*|девайс\p{L}*)|вагинальн\p{L}*\s+стимулятор\p{L}*)/iu;
   return objects.some((object) => pattern.test(object));
+}
+
+function hasConfirmedSexualObject(sceneObjects: string[], deep: DeepAnalysisResult | null): boolean {
+  if (deep?.context?.sexual_context !== true) return false;
+  const decompositionObjects = deep.sceneDecomposition?.objects;
+  const describedObjects = Array.isArray(decompositionObjects)
+    ? decompositionObjects.filter((object): object is string => typeof object === 'string')
+    : [];
+  const supportingDescriptions = [
+    ...sceneObjects,
+    ...describedObjects,
+    ...(deep.context.explanation ? [deep.context.explanation] : []),
+    ...(deep.composition?.visual_focus ? [deep.composition.visual_focus] : []),
+    ...(deep.ocr?.text_regions ?? []),
+  ];
+  return hasPotentialSexualObject(supportingDescriptions);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
