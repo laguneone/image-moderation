@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ConfigStatus, Prisma } from '@moderation/database';
 import { ApiKeyGuard } from '../common/api-key.guard';
 import { PrismaService } from '../database/prisma.service';
@@ -20,6 +20,28 @@ export class ConfigurationController {
       this.prisma.ruleVersion.findMany({ orderBy: [{ priority: 'asc' }, { key: 'asc' }, { version: 'desc' }] }),
     ]);
     return { models, pipelines, prompts, rules };
+  }
+
+  @Get('history')
+  async history(@Headers('x-admin-role') role: string | undefined): Promise<unknown> {
+    assertAdmin(role);
+    return this.prisma.configurationAuditLog.findMany({ orderBy: { createdAt: 'desc' }, take: 250 });
+  }
+
+  @Get('pipelines/compare')
+  async comparePipelines(@Query('left') left: string | undefined, @Query('right') right: string | undefined, @Headers('x-admin-role') role: string | undefined): Promise<Record<string, unknown>> {
+    assertAdmin(role);
+    if (!left || !right || left.length > 128 || right.length > 128 || left === right) throw new BadRequestException('Укажите два разных идентификатора версий pipeline.');
+    const [first, second] = await Promise.all([
+      this.prisma.pipelineVersion.findUnique({ where: { id: left } }),
+      this.prisma.pipelineVersion.findUnique({ where: { id: right } }),
+    ]);
+    if (!first || !second) throw new BadRequestException('Одна из версий pipeline не найдена.');
+    const firstConfig = isRecord(first.configuration) ? first.configuration : {};
+    const secondConfig = isRecord(second.configuration) ? second.configuration : {};
+    const keys = [...new Set([...Object.keys(firstConfig), ...Object.keys(secondConfig)])].sort();
+    const [leftMetrics, rightMetrics] = await Promise.all([this.pipelineMetrics(first.id), this.pipelineMetrics(second.id)]);
+    return { left: { id: first.id, key: first.pipelineKey, version: first.version, name: first.name, metrics: leftMetrics }, right: { id: second.id, key: second.pipelineKey, version: second.version, name: second.name, metrics: rightMetrics }, changes: keys.filter((key) => JSON.stringify(firstConfig[key]) !== JSON.stringify(secondConfig[key])).map((key) => ({ setting: key, left: firstConfig[key] ?? null, right: secondConfig[key] ?? null })) };
   }
 
   @Post('models')
@@ -123,6 +145,17 @@ export class ConfigurationController {
       if (kind === 'rule') return publishVersion(tx, 'ruleVersion', id, actor);
       throw new BadRequestException('Configuration kind is not supported.');
     });
+  }
+
+  private async pipelineMetrics(id: string): Promise<Record<string, unknown>> {
+    const [jobs, results, calls, decisions, duration] = await Promise.all([
+      this.prisma.moderationJob.count({ where: { pipelineVersionId: id } }),
+      this.prisma.moderationResult.aggregate({ where: { job: { pipelineVersionId: id } }, _avg: { nsfwRiskScore: true, domainMismatchScore: true }, _count: { id: true } }),
+      this.prisma.modelInvocation.aggregate({ where: { job: { pipelineVersionId: id } }, _sum: { costUsd: true }, _count: { id: true } }),
+      this.prisma.moderationResult.groupBy({ by: ['decision'], where: { job: { pipelineVersionId: id } }, _count: { id: true } }),
+      this.prisma.$queryRaw<Array<{ average_ms: number | null }>>`SELECT AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)::float AS average_ms FROM moderation_jobs WHERE pipeline_version_id = ${id} AND status = 'COMPLETED' AND started_at IS NOT NULL AND completed_at IS NOT NULL`,
+    ]);
+    return { jobs, analyzed: results._count.id, average_nsfw_risk: results._avg.nsfwRiskScore === null ? null : Math.round(results._avg.nsfwRiskScore), average_domain_mismatch: results._avg.domainMismatchScore === null ? null : Math.round(results._avg.domainMismatchScore), model_calls: calls._count.id, known_cost_usd: calls._sum.costUsd === null ? null : Number(calls._sum.costUsd), average_duration_ms: duration[0]?.average_ms === null || duration[0]?.average_ms === undefined ? null : Math.round(duration[0].average_ms), decisions: decisions.map((item) => ({ decision: item.decision, count: item._count.id })) };
   }
 }
 

@@ -21,8 +21,8 @@ async function proxy(request: Request, context: RouteContext, method: 'GET' | 'P
   const target = new URL(`/api/v1/admin/${path.map(encodeURIComponent).join('/')}`, apiUrl);
   target.search = new URL(request.url).search;
   const headers = new Headers({ 'x-api-key': apiKey, 'x-admin-id': session.id, 'x-admin-role': session.role });
-  if (path[0] === 'configuration') {
-    if (session.role !== 'ADMIN') return Response.json({ error: 'Управлять конфигурацией может только администратор.' }, { status: 403 });
+  if (path[0] === 'configuration' || path[0] === 'analytics') {
+    if (session.role !== 'ADMIN') return Response.json({ error: 'Раздел доступен только администратору.' }, { status: 403 });
     const adminToken = cookieValue(request.headers.get('cookie'), ADMIN_COOKIE);
     if (adminToken) headers.set('x-admin-session', adminToken);
   }
@@ -33,6 +33,8 @@ async function proxy(request: Request, context: RouteContext, method: 'GET' | 'P
   const responseHeaders = new Headers({ 'Cache-Control': 'no-store' });
   const upstreamType = upstream.headers.get('content-type');
   if (upstreamType) responseHeaders.set('content-type', upstreamType);
+  const disposition = upstream.headers.get('content-disposition');
+  if (disposition) responseHeaders.set('content-disposition', disposition);
   responseHeaders.set('X-Content-Type-Options', 'nosniff');
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }

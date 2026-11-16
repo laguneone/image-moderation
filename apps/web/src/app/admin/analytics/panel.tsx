@@ -1,0 +1,49 @@
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+
+interface Report { summary: { jobs: number; errors: number; manual_approved: number; manual_rejected: number; average_duration_ms: number | null }; models: Array<{ model_id: string; calls: number; statuses: Record<string, number>; input_tokens: number | null; output_tokens: number | null; cost_usd: number | null; average_latency_ms: number | null }>; decisions: Array<{ decision: string; count: number; average_nsfw_risk: number | null }>; daily: Array<{ day: string; jobs: number; errors: number }>; quality_note: string }
+interface Pipeline { id: string; pipelineKey: string; version: number; name: string; status: string }
+
+export function AnalyticsPanel(): React.JSX.Element {
+  const [report, setReport] = useState<Report | null>(null); const [pipelines, setPipelines] = useState<Pipeline[]>([]); const [history, setHistory] = useState<Array<Record<string, unknown>>>([]);
+  const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [left, setLeft] = useState(''); const [right, setRight] = useState(''); const [comparison, setComparison] = useState<unknown>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const query = useMemo(() => { const params = new URLSearchParams(); if (from) params.set('from', new Date(`${from}T00:00:00`).toISOString()); if (to) params.set('to', new Date(`${to}T23:59:59.999`).toISOString()); return params.toString(); }, [from, to]);
+  async function load(): Promise<void> {
+    setBusy(true); setError('');
+    try {
+      const [analyticsResponse, configResponse, historyResponse] = await Promise.all([fetch(`/api/admin/analytics${query ? `?${query}` : ''}`, { cache: 'no-store' }), fetch('/api/admin/configuration', { cache: 'no-store' }), fetch('/api/admin/configuration/history', { cache: 'no-store' })]);
+      const [analyticsBody, configBody, historyBody]: unknown[] = await Promise.all([analyticsResponse.json(), configResponse.json(), historyResponse.json()]);
+      if (!analyticsResponse.ok || !configResponse.ok || !historyResponse.ok) throw new Error(errorMessage(!analyticsResponse.ok ? analyticsBody : !configResponse.ok ? configBody : historyBody));
+      if (!isReport(analyticsBody) || !isRecord(configBody) || !Array.isArray(configBody.pipelines) || !Array.isArray(historyBody)) throw new Error('Сервер вернул некорректный отчёт.');
+      setReport(analyticsBody); setPipelines(configBody.pipelines.filter(isPipeline)); setHistory(historyBody);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось загрузить аналитику.'); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => { void load(); }, [query]);
+  async function compare(): Promise<void> {
+    if (!left || !right) return;
+    try { const params = new URLSearchParams({ left, right }); const response = await fetch(`/api/admin/configuration/pipelines/compare?${params}`, { cache: 'no-store' }); const body: unknown = await response.json(); if (!response.ok) throw new Error(errorMessage(body)); setComparison(body); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Сравнение версий не удалось.'); }
+  }
+  const exportUrl = `/api/admin/analytics/export${query ? `?${query}` : ''}`;
+  return <main className="admin-shell"><header className="admin-header"><div><p className="admin-eyebrow">Операционные показатели</p><h1>Аналитика</h1></div></header>
+    <nav className="admin-nav"><Link href="/admin">Обзор</Link><Link href="/admin/moderations">История проверок</Link><Link href="/admin/config">Конфигурация</Link><Link aria-current="page" href="/admin/analytics">Аналитика</Link></nav>
+    <form className="admin-filter" onSubmit={(event) => { event.preventDefault(); void load(); }}><label>С даты<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label><label>По дату<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label><button className="admin-button" disabled={busy}>Обновить</button><a className="admin-button subtle" href={exportUrl}>Скачать CSV</a></form>
+    {error && <p className="admin-error admin-alert" role="alert">{error}</p>}
+    {report && <><section className="admin-kpis"><Metric label="Заданий" value={report.summary.jobs} /><Metric label="Ошибок" value={report.summary.errors} /><Metric label="Ручных одобрений" value={report.summary.manual_approved} /><Metric label="Ручных отклонений" value={report.summary.manual_rejected} /><Metric label="Средняя длительность" value={report.summary.average_duration_ms === null ? '—' : `${(report.summary.average_duration_ms / 1000).toFixed(1)} с`} /><Metric label="Известные расходы" value={`$${report.models.reduce((total, model) => total + (model.cost_usd ?? 0), 0).toFixed(4)}`} /></section>
+      <section className="admin-panel"><h2>Модели</h2><Table headers={['Модель', 'Вызовы', 'Ошибки', 'Входные токены', 'Выходные токены', 'Среднее время', 'Расход']} rows={report.models.map((model) => [model.model_id, model.calls, model.statuses.failed ?? 0, model.input_tokens ?? '—', model.output_tokens ?? '—', model.average_latency_ms === null ? '—' : `${model.average_latency_ms} мс`, model.cost_usd === null ? '—' : `$${model.cost_usd.toFixed(6)}`])} /></section>
+      <section className="admin-panel"><h2>Решения и сигналы качества</h2><p className="admin-muted">{report.quality_note}</p><Table headers={['Решение', 'Количество', 'Средний NSFW риск']} rows={report.decisions.map((decision) => [decision.decision, decision.count, decision.average_nsfw_risk ?? '—'])} /></section>
+      <section className="admin-panel"><h2>Динамика по дням</h2><Table headers={['Дата', 'Задания', 'Ошибки']} rows={report.daily.map((day) => [day.day, day.jobs, day.errors])} /></section></>}
+    <section className="admin-panel"><h2>Сравнение версий pipeline</h2><div className="config-form"><select value={left} onChange={(event) => setLeft(event.target.value)}><option value="">Первая версия</option>{pipelines.map((item) => <option key={item.id} value={item.id}>{item.pipelineKey} v{item.version} · {item.status}</option>)}</select><select value={right} onChange={(event) => setRight(event.target.value)}><option value="">Вторая версия</option>{pipelines.map((item) => <option key={item.id} value={item.id}>{item.pipelineKey} v{item.version} · {item.status}</option>)}</select><button className="admin-button" disabled={!left || !right || left === right} onClick={() => void compare()}>Сравнить</button></div>{comparison !== null && <pre className="admin-json">{JSON.stringify(comparison, null, 2)}</pre>}</section>
+    <section className="admin-panel"><h2>История изменений конфигурации</h2><Table headers={['Дата', 'Тип', 'Действие', 'Объект', 'Администратор']} rows={history.map((entry) => [stringValue(entry.createdAt), stringValue(entry.entityType), stringValue(entry.action), stringValue(entry.entityId), stringValue(entry.actorId)])} /></section>
+  </main>;
+}
+function Metric({ label, value }: { label: string; value: string | number }): React.JSX.Element { return <article className="admin-metric"><span>{label}</span><strong>{value}</strong></article>; }
+function Table({ headers, rows }: { headers: string[]; rows: unknown[][] }): React.JSX.Element { return rows.length === 0 ? <p className="admin-muted">Нет данных за выбранный период.</p> : <div className="admin-table-wrap"><table className="admin-table"><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((value, cell) => <td key={cell}>{String(value)}</td>)}</tr>)}</tbody></table></div>; }
+function isPipeline(value: unknown): value is Pipeline { return isRecord(value) && typeof value.id === 'string' && typeof value.pipelineKey === 'string' && typeof value.version === 'number' && typeof value.name === 'string' && typeof value.status === 'string'; }
+function isReport(value: unknown): value is Report { return isRecord(value) && isRecord(value.summary) && Array.isArray(value.models) && Array.isArray(value.decisions) && Array.isArray(value.daily) && typeof value.quality_note === 'string'; }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function stringValue(value: unknown): string { return value === null || value === undefined ? '—' : String(value); }
+function errorMessage(value: unknown): string { return isRecord(value) && typeof value.message === 'string' ? value.message : 'Ошибка запроса аналитики.'; }
