@@ -1,4 +1,4 @@
-import { ADMIN_COOKIE, verifyAdminToken } from '../../../../lib/admin-auth';
+import { ADMIN_COOKIE, isSameOriginRequest, verifyAdminToken } from '../../../../lib/admin-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,7 +10,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
 async function proxy(request: Request, context: RouteContext, method: 'GET' | 'POST'): Promise<Response> {
   const session = verifyAdminToken(cookieValue(request.headers.get('cookie'), ADMIN_COOKIE));
   if (!session) return Response.json({ error: 'Требуется авторизация администратора.' }, { status: 401 });
-  if (method === 'POST' && request.headers.get('origin') !== new URL(request.url).origin) {
+  if (method === 'POST' && !isSameOriginRequest(request)) {
     return Response.json({ error: 'Недопустимый источник запроса.' }, { status: 403 });
   }
   const { path } = await context.params;

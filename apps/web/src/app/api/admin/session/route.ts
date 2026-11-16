@@ -1,9 +1,9 @@
-import { authenticateAdmin, createAdminToken, sessionCookie, verifyAdminToken, ADMIN_COOKIE } from '../../../../lib/admin-auth';
+import { authenticateAdmin, createAdminToken, isSameOriginRequest, sessionCookie, verifyAdminToken, ADMIN_COOKIE } from '../../../../lib/admin-auth';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: Request): Promise<Response> {
-  if (!sameOrigin(request)) return Response.json({ error: 'Недопустимый источник запроса.' }, { status: 403 });
+  if (!isSameOriginRequest(request)) return Response.json({ error: 'Недопустимый источник запроса.' }, { status: 403 });
   if (Buffer.byteLength(process.env.ADMIN_SESSION_SECRET ?? '') < 32) {
     return Response.json({ error: 'Админ-панель не настроена: укажите ADMIN_SESSION_SECRET.' }, { status: 503 });
   }
@@ -18,13 +18,12 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 export async function DELETE(request: Request): Promise<Response> {
-  if (!sameOrigin(request)) return Response.json({ error: 'Недопустимый источник запроса.' }, { status: 403 });
+  if (!isSameOriginRequest(request)) return Response.json({ error: 'Недопустимый источник запроса.' }, { status: 403 });
   const token = cookieValue(request.headers.get('cookie'), ADMIN_COOKIE);
   if (!verifyAdminToken(token)) return Response.json({ error: 'Требуется авторизация.' }, { status: 401 });
   return Response.json({ status: 'ok' }, { headers: { 'Set-Cookie': sessionCookie('', true), 'Cache-Control': 'no-store' } });
 }
 
-function sameOrigin(request: Request): boolean { return request.headers.get('origin') === new URL(request.url).origin; }
 function cookieValue(header: string | null, name: string): string | undefined {
   return header?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
 }
